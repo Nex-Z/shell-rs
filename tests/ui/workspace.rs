@@ -340,7 +340,7 @@ fn close_shortcut_closes_the_displayed_tab_down_to_none(cx: &mut TestAppContext)
         window.render_frame(cx);
         // The new tab is displayed, with its input focused.
         assert!(window.find(("terminal", FIRST_NEW_TERMINAL)).visible());
-        window.press("cmd-w", cx);
+        window.press("secondary-w", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -350,14 +350,14 @@ fn close_shortcut_closes_the_displayed_tab_down_to_none(cx: &mut TestAppContext)
         assert!(window.try_find(("terminal", FIRST_NEW_TERMINAL)).is_none());
         assert!(window.try_find("recent-hosts").is_none());
         // Keep closing whichever tab the dock displays next.
-        window.press("cmd-w", cx);
+        window.press("secondary-w", cx);
     })
     .unwrap();
     cx.run_until_parked();
 
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.press("cmd-w", cx);
+        window.press("secondary-w", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -376,7 +376,7 @@ fn close_shortcut_closes_the_displayed_tab_down_to_none(cx: &mut TestAppContext)
         );
         assert!(window.find("recent-hosts").visible());
         // With nothing open the shortcut does nothing.
-        window.press("cmd-w", cx);
+        window.press("secondary-w", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -510,7 +510,7 @@ async fn a_terminal_tab_can_be_renamed_and_follow_the_host_again(cx: &mut TestAp
         window.render_frame(cx);
         assert_eq!(window.find("tab-name").value(), Some("web-01"));
         window.click("tab-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("日志排查", cx);
         window.click("commit", cx);
     })
@@ -556,7 +556,7 @@ async fn a_terminal_tab_can_be_renamed_and_follow_the_host_again(cx: &mut TestAp
         window.render_frame(cx);
         assert_eq!(window.find("tab-name").value(), Some("日志排查"));
         window.click("tab-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.press("backspace", cx);
         window.click("commit", cx);
     })
@@ -749,7 +749,7 @@ async fn a_dialog_says_what_is_wrong_in_a_notification_that_goes_with_it(cx: &mu
     cx.run_until_parked();
 
     for (open, field, error) in [
-        ("new-host-panel", "host-name", "请输入名称"),
+        ("new-host-panel", "host-address", "请输入地址"),
         ("temporary-connection", "host-address", "请输入地址"),
         ("new-group", "group-name", "请输入分组名称"),
         ("new-forward", "forward-name", "请选择端口转发经由的主机"),

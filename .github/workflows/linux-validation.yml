@@ -1,0 +1,85 @@
+# Fork-only verification branch; this workflow never packages or publishes.
+name: linux-validation
+
+on:
+  push:
+    branches: ["verify/linux-auto-host-name"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
+      # Keep debug assertions and test behavior; omit debug symbols to fit
+      # the GPUI build on a standard hosted runner's disk and memory.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record checkout and runner
+        run: |
+          mkdir -p validation-logs
+          {
+            git rev-parse HEAD
+            git status --short
+            sha256sum Cargo.lock rust-toolchain.toml
+            uname -a
+            df -h .
+            free -h
+            printf 'Build jobs: %s; dev/test debug symbols: %s/%s; incremental: %s\n' \
+              "$CARGO_BUILD_JOBS" "$CARGO_PROFILE_DEV_DEBUG" \
+              "$CARGO_PROFILE_TEST_DEBUG" "$CARGO_INCREMENTAL"
+          } 2>&1 | tee validation-logs/environment.log
+      - name: Install Linux build dependencies
+        id: dependencies
+        run: |
+          {
+            sudo apt-get update
+            sudo apt-get install -y cmake clang pkg-config libfontconfig-dev \
+              libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+              libx11-xcb-dev libxcb1-dev libvulkan-dev libdbus-1-dev libssl-dev \
+              fonts-dejavu-core openssh-sftp-server
+            test -x /usr/lib/openssh/sftp-server
+          } 2>&1 | tee validation-logs/dependencies.log
+      - name: Install the pinned Rust toolchain
+        id: toolchain
+        run: |
+          {
+            rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+            rustc --version --verbose
+            cargo --version
+          } 2>&1 | tee validation-logs/toolchain.log
+      - name: Formatting
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cargo fmt --check 2>&1 | tee validation-logs/fmt.log
+      - name: Clippy (all targets, warnings are errors)
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && steps.toolchain.outcome == 'success' }}
+        run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee validation-logs/clippy.log
+      - name: Complete default test suite
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' && steps.toolchain.outcome == 'success' }}
+        # No filters or added skips. Preserve the repository's existing
+        # ignored tests; --no-fail-fast also runs later targets on failure.
+        run: cargo test --locked --no-fail-fast 2>&1 | tee validation-logs/test.log
+      - name: Preserve validation logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-validation-${{ github.sha }}
+          path: validation-logs/
+          retention-days: 14
+          if-no-files-found: warn

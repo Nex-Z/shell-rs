@@ -127,8 +127,8 @@ host.dialog.name:
   zh-CN: 名称
   en: Name
 host.dialog.name_placeholder:
-  zh-CN: 例如 web-01
-  en: e.g. web-01
+  zh-CN: 可选，默认用地址
+  en: Optional; the address if left empty
 host.dialog.temporary_name_placeholder:
   zh-CN: 可选，默认用地址
   en: Optional; the address if left empty

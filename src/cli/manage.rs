@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_host_needs_a_name_and_an_address_and_takes_the_forms_defaults() {
+    fn a_new_host_needs_an_address_and_takes_the_forms_defaults() {
         let (store, _, _) = store();
         let plan = plan_host(
             fields(serde_json::json!({ "name": " db ", "host": "10.0.0.2" })),
@@ -761,7 +761,11 @@ mod tests {
         );
 
         for (json, message) in [
-            (serde_json::json!({ "host": "10.0.0.2" }), "请输入名称"),
+            (serde_json::json!({}), "请输入地址"),
+            (
+                serde_json::json!({ "name": "", "host": "   " }),
+                "请输入地址",
+            ),
             (serde_json::json!({ "name": "db" }), "请输入地址"),
             (
                 serde_json::json!({ "name": "db", "host": "h", "port": 0 }),
@@ -791,6 +795,26 @@ mod tests {
         ] {
             assert_eq!(refused(plan_host(fields(json), None, &store)), bad(message));
         }
+    }
+
+    #[test]
+    fn a_host_with_no_name_uses_its_address() {
+        let (store, web, _) = store();
+        for json in [
+            serde_json::json!({ "host": " 10.0.0.2 " }),
+            serde_json::json!({ "name": "", "host": " 10.0.0.2 " }),
+            serde_json::json!({ "name": "   ", "host": " 10.0.0.2 " }),
+        ] {
+            let plan = plan_host(fields(json), None, &store).unwrap();
+            assert_eq!(plan.draft.name.as_ref(), "10.0.0.2");
+        }
+        let plan = plan_host(
+            fields(serde_json::json!({ "name": " " })),
+            Some(web),
+            &store,
+        )
+        .unwrap();
+        assert_eq!(plan.draft.name, plan.draft.address);
     }
 
     #[test]

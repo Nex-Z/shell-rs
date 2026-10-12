@@ -82,7 +82,7 @@ async fn a_new_password_credential_keeps_its_password_in_the_keychain(cx: &mut T
         assert!(window.find("credential-password").visible());
         window.input("运维", cx);
         window.click("credential-user", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("deploy", cx);
         window.click("credential-password", cx);
         window.input("hunter2", cx);
@@ -234,8 +234,6 @@ async fn a_host_can_use_a_credential_instead_of_typing_a_login(cx: &mut TestAppC
     );
     in_frame(cx, handle, |window, cx| window.click("new-host-panel", cx));
     in_frame(cx, handle, |window, cx| {
-        window.click("host-name", cx);
-        window.input("web-01", cx);
         window.click("host-address", cx);
         window.input("10.0.1.12", cx);
         window.within("host-auth-source").click(1usize, cx);
@@ -274,8 +272,8 @@ async fn a_host_can_use_a_credential_instead_of_typing_a_login(cx: &mut TestAppC
         let created = store
             .hosts()
             .iter()
-            .find(|host| host.name == "web-01")
-            .expect("web-01 inserted");
+            .find(|host| host.name == "10.0.1.12")
+            .expect("host named after its address inserted");
         assert_eq!(created.credential, Some(credential));
         assert_eq!(created.user.as_ref(), "deploy");
         assert_eq!(created.auth, AuthKind::Password);
@@ -391,7 +389,7 @@ async fn editing_a_credentials_user_reconnects_the_hosts_using_it(cx: &mut TestA
             )
         );
         window.click("credential-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("生产运维", cx);
         window.click("commit", cx);
     });
@@ -405,7 +403,7 @@ async fn editing_a_credentials_user_reconnects_the_hosts_using_it(cx: &mut TestA
     });
     in_frame(cx, handle, |window, cx| {
         window.click("credential-user", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("admin", cx);
         window.click("commit", cx);
     });
@@ -622,7 +620,7 @@ async fn a_pasted_key_is_checked_then_kept_by_shellrs(cx: &mut TestAppContext) {
     in_frame(cx, handle, |window, cx| {
         assert!(window.try_find("credential-key-path").is_none());
         window.click("credential-key-text", cx);
-        window.press("cmd-v", cx);
+        window.press("secondary-v", cx);
     });
     in_frame(cx, handle, |window, cx| {
         assert!(window.try_find("credential-public-key").is_none());
@@ -638,8 +636,8 @@ async fn a_pasted_key_is_checked_then_kept_by_shellrs(cx: &mut TestAppContext) {
     cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())));
     in_frame(cx, handle, |window, cx| {
         window.click("credential-key-text", cx);
-        window.press("cmd-a", cx);
-        window.press("cmd-v", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-v", cx);
     });
     in_frame(cx, handle, |window, cx| {
         assert_eq!(

@@ -159,7 +159,7 @@ async fn the_search_narrows_the_list(cx: &mut TestAppContext) {
 
     // A PID finds its process.
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("913756", cx);
     });
     in_frame(cx, handle, |window, _| {
@@ -172,7 +172,7 @@ async fn the_search_narrows_the_list(cx: &mut TestAppContext) {
     });
 
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("mysql", cx);
     });
     in_frame(cx, handle, |window, _| {
@@ -238,17 +238,21 @@ async fn the_connections_are_read_each_time_they_come_on_screen_and_only_then(
     cx.run_until_parked();
     assert_eq!(factory.exec_count(), 1);
 
-    // Back, the list it had shows at once while it is read again.
-    in_frame(cx, handle, |window, cx| {
-        window.click("tool-connections", cx)
-    });
-    in_frame(cx, handle, |window, _| {
-        assert!(
-            window
-                .try_find("netstat-socket:tcp 0.0.0.0:80 0.0.0.0:*")
-                .is_some()
-        );
-    });
+    // Keep the fake refresh pending while checking the cached list; an
+    // immediate reply could otherwise replace it before the next frame.
+    {
+        let _pending_refresh = factory.exec_outputs.lock().unwrap();
+        in_frame(cx, handle, |window, cx| {
+            window.click("tool-connections", cx)
+        });
+        in_frame(cx, handle, |window, _| {
+            assert!(
+                window
+                    .try_find("netstat-socket:tcp 0.0.0.0:80 0.0.0.0:*")
+                    .is_some()
+            );
+        });
+    }
     wait_for_label(
         cx,
         handle,

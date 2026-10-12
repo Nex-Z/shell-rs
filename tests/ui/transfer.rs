@@ -50,7 +50,7 @@ async fn sftp_multi_selection_keyboard_upload_freezes_paths_and_cancel_resumes(
     }
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -101,7 +101,7 @@ async fn sftp_multi_selection_keyboard_upload_freezes_paths_and_cancel_resumes(
             Some("链接目录")
         );
         window.click("upload-target", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("/固定目标", cx);
         window.click("upload-confirm", cx);
     })

@@ -585,19 +585,20 @@ impl HostDraft {
         SecretRef::password(self.user.as_ref(), self.address.as_ref(), self.port)
     }
 
-    /// The draft with surrounding blanks removed and an empty user name
-    /// taken as [`super::DEFAULT_USER`], or the first thing wrong with it,
+    /// The draft with surrounding blanks removed, an empty name taken as
+    /// the address and an empty user name as [`super::DEFAULT_USER`], or the
+    /// first thing wrong with it,
     /// in the order the host form checks. What the form cannot leave out
     /// of a draft (a credential to pick, a proxy password without a user)
     /// is the caller's to check.
     pub fn validated(mut self) -> Result<Self, HostDraftError> {
         self.name = self.name.trim().to_string().into();
-        if self.name.is_empty() {
-            return Err(HostDraftError::Name);
-        }
         self.address = self.address.trim().to_string().into();
         if self.address.is_empty() {
             return Err(HostDraftError::Address);
+        }
+        if self.name.is_empty() {
+            self.name = self.address.clone();
         }
         if self.port == 0 {
             return Err(HostDraftError::Port);
@@ -670,6 +671,39 @@ impl std::error::Error for HostDraftError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_blank_host_name_uses_the_trimmed_address() {
+        for (name, expected) in [
+            ("", "example.com"),
+            (" \t ", "example.com"),
+            (" web-01 ", "web-01"),
+        ] {
+            let draft = HostDraft::new(name, " example.com ", 2222, "", AuthKind::Password, None)
+                .validated()
+                .unwrap();
+            assert_eq!(draft.name.as_ref(), expected);
+            assert_eq!(draft.address.as_ref(), "example.com");
+            assert_eq!(draft.user.as_ref(), super::super::DEFAULT_USER);
+            assert_eq!(draft.port, 2222);
+        }
+    }
+
+    #[test]
+    fn a_host_still_requires_an_address_with_or_without_a_name() {
+        for name in ["", " ", "web-01"] {
+            for address in ["", " \t "] {
+                let error = HostDraft::new(name, address, 22, "root", AuthKind::Password, None)
+                    .validated()
+                    .unwrap_err();
+                assert_eq!(error, HostDraftError::Address);
+            }
+        }
+        let error = HostDraft::new("", "example.com", 0, "root", AuthKind::Password, None)
+            .validated()
+            .unwrap_err();
+        assert_eq!(error, HostDraftError::Port);
+    }
 
     #[test]
     fn the_distributions_are_linux_and_the_rest_are_not() {

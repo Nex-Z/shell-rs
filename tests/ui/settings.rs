@@ -112,8 +112,8 @@ fn settings_open_from_the_host_list_as_one_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("settings").visible());
         assert_eq!(window.find("settings").focused(), Some(true));
-        // ⌘W closes it like any other tab.
-        window.press("cmd-w", cx);
+        // The platform close shortcut closes it like any other tab.
+        window.press("secondary-w", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -579,7 +579,7 @@ async fn highlight_rules_are_edited_in_place_on_their_page(cx: &mut TestAppConte
             window.find(("highlight-rule-error", 3usize)).label(),
             Some("正则表达式写法有误")
         );
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input(r"OutOfMemory\w*", cx);
     });
     in_frame(cx, handle, |window, cx| {
@@ -587,7 +587,7 @@ async fn highlight_rules_are_edited_in_place_on_their_page(cx: &mut TestAppConte
         window.click(("highlight-rule-note", 3usize), cx);
         window.input("内存溢出", cx);
         window.click(("highlight-rule-color", 3usize), cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("#D946EF", cx);
         window.click(("highlight-rule-notify", 3usize), cx);
         window.click(("highlight-rule-enabled", 0usize), cx);
