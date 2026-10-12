@@ -43,3 +43,9 @@ These are extracted, independently maintained submissions, not commits merged in
 - Review upstream updates on a separate integration branch/worktree before bringing them into this baseline. Reconcile features already accepted upstream to avoid duplicate implementations.
 - Keep build outputs, caches, logs, local data, and generated test captures outside commits. Existing preview artifacts are not rebuilt or revalidated by this source-backup commit.
 - Run the repository's applicable checks after future code changes. This baseline backup itself does not claim a fresh build or a full cross-platform test pass.
+
+## Fork Windows CI
+
+`personal-windows-tests.yml` runs on pushes to `personal/integrated-desktop`, with a repository guard restricting execution to `Nex-Z/shell-rs` and read-only repository permissions. It checks formatting, Clippy for default and preview builds, and the full ordinary test suite for both configurations on Windows 2025. Preview tests also set a conflicting stable update channel to exercise isolation. Test data directories are runner-local and separate. Existing ignored/platform-gated tests keep their normal semantics; failures are not suppressed.
+
+This workflow uploads logs only: it has no Linux job, release build, installer, installation, release publishing, or deployment. Each run records its exact source SHA. A workflow result must be checked before describing that SHA as verified; local targeted results above do not imply full CI success. The workflow also declares manual dispatch, subject to GitHub's default-branch discovery requirements.

@@ -1,0 +1,75 @@
+name: personal-windows-tests
+on:
+  push:
+    branches: [personal/integrated-desktop]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: personal-windows-tests-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+defaults:
+  run:
+    shell: bash
+jobs:
+  windows:
+    if: github.repository == 'Nex-Z/shell-rs'
+    runs-on: windows-2025
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record source and isolate test data
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory validation-logs -Force | Out-Null
+          git rev-parse HEAD | Set-Content validation-logs/source.log
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "SHELLRS_DATA_DIR=$env:RUNNER_TEMP/shellrs-ci-normal" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "SHELLRS_PREVIEW_DATA_DIR=$env:RUNNER_TEMP/shellrs-ci-preview" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Pinned Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: preview-v1
+          key: ${{ runner.os }}-${{ runner.arch }}-rust1.98.1-default-preview-debug0-release-thin
+          cache-bin: 'false'
+          cache-workspace-crates: 'false'
+          cache-on-failure: 'true'
+          env-vars: CARGO CC CFLAGS CXX CMAKE RUST
+      - uses: ilammy/setup-nasm@v1
+      - name: Format
+        run: cargo fmt --check 2>&1 | tee validation-logs/format.log
+      - name: Default Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee validation-logs/default-clippy.log
+      - name: Default full tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast 2>&1 | tee validation-logs/default-tests.log
+      - name: Preview Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --features preview --all-targets -- -D warnings 2>&1 | tee validation-logs/preview-clippy.log
+      - name: Preview full tests
+        if: ${{ !cancelled() }}
+        env:
+          SHELLRS_UPDATE_CHANNEL: stable
+        run: cargo test --locked --features preview --no-fail-fast 2>&1 | tee validation-logs/preview-tests.log
+      - name: Retain validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-windows-tests-${{ github.sha }}
+          path: validation-logs/
+          retention-days: 7
+          if-no-files-found: warn
