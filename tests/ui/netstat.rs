@@ -159,7 +159,7 @@ async fn the_search_narrows_the_list(cx: &mut TestAppContext) {
 
     // A PID finds its process.
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("913756", cx);
     });
     in_frame(cx, handle, |window, _| {
@@ -172,7 +172,7 @@ async fn the_search_narrows_the_list(cx: &mut TestAppContext) {
     });
 
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("mysql", cx);
     });
     in_frame(cx, handle, |window, _| {

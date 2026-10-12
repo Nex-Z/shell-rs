@@ -82,7 +82,7 @@ async fn a_new_password_credential_keeps_its_password_in_the_keychain(cx: &mut T
         assert!(window.find("credential-password").visible());
         window.input("运维", cx);
         window.click("credential-user", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("deploy", cx);
         window.click("credential-password", cx);
         window.input("hunter2", cx);
@@ -389,7 +389,7 @@ async fn editing_a_credentials_user_reconnects_the_hosts_using_it(cx: &mut TestA
             )
         );
         window.click("credential-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("生产运维", cx);
         window.click("commit", cx);
     });
@@ -403,7 +403,7 @@ async fn editing_a_credentials_user_reconnects_the_hosts_using_it(cx: &mut TestA
     });
     in_frame(cx, handle, |window, cx| {
         window.click("credential-user", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("admin", cx);
         window.click("commit", cx);
     });
@@ -620,7 +620,7 @@ async fn a_pasted_key_is_checked_then_kept_by_shellrs(cx: &mut TestAppContext) {
     in_frame(cx, handle, |window, cx| {
         assert!(window.try_find("credential-key-path").is_none());
         window.click("credential-key-text", cx);
-        window.press("cmd-v", cx);
+        window.press("secondary-v", cx);
     });
     in_frame(cx, handle, |window, cx| {
         assert!(window.try_find("credential-public-key").is_none());
@@ -636,8 +636,8 @@ async fn a_pasted_key_is_checked_then_kept_by_shellrs(cx: &mut TestAppContext) {
     cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())));
     in_frame(cx, handle, |window, cx| {
         window.click("credential-key-text", cx);
-        window.press("cmd-a", cx);
-        window.press("cmd-v", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-v", cx);
     });
     in_frame(cx, handle, |window, cx| {
         assert_eq!(

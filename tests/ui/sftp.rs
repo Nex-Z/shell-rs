@@ -832,7 +832,7 @@ async fn sftp_bookmark_dialog_adds_orders_removes_and_opens(cx: &mut TestAppCont
         assert_eq!(window.find("bookmark:/home/tester").selected(), Some(true));
         assert!(!enabled(&window.find("bookmark-add")), "already bookmarked");
         window.click("open-directory-path", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("/etc/", cx);
     })
     .unwrap();
@@ -1381,7 +1381,7 @@ async fn sftp_file_commands_confirm_validate_and_send_one_operation(cx: &mut Tes
             window.render_frame(cx);
             if let Some(typed) = typed {
                 window.click("entry-name", cx);
-                window.press("cmd-a", cx);
+                window.press("secondary-a", cx);
                 window.press("backspace", cx);
                 window.input(typed, cx);
             }
@@ -1400,7 +1400,7 @@ async fn sftp_file_commands_confirm_validate_and_send_one_operation(cx: &mut Tes
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("entry-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("新名字.txt", cx);
         window.click("commit", cx);
     })
@@ -1851,7 +1851,7 @@ async fn the_sftp_tab_can_be_renamed_and_follow_the_host_again(cx: &mut TestAppC
         window.render_frame(cx);
         assert_eq!(window.find("tab-name").value(), Some(default.as_str()));
         window.click("tab-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("生产库文件", cx);
         window.click("commit", cx);
     })
@@ -1879,7 +1879,7 @@ async fn the_sftp_tab_can_be_renamed_and_follow_the_host_again(cx: &mut TestAppC
         window.render_frame(cx);
         assert_eq!(window.find("tab-name").value(), Some("生产库文件"));
         window.click("tab-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.press("backspace", cx);
         window.click("commit", cx);
     })

@@ -270,7 +270,7 @@ async fn a_hosts_notes_take_several_lines_and_come_back_when_edited(cx: &mut Tes
     });
     in_frame(cx, handle, |window, cx| {
         window.click("host-notes", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("已下线", cx);
         window.click("commit", cx);
     });
@@ -648,10 +648,10 @@ async fn testing_a_connection_logs_in_with_what_the_form_shows(cx: &mut TestAppC
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("host-password", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("wrong-password", cx);
         window.click("host-port", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("2222", cx);
         window.click("test-connection", cx);
     })
@@ -724,7 +724,7 @@ async fn a_connection_test_needs_a_host_and_a_user_first(cx: &mut TestAppContext
         window.input("10.0.3.7", cx);
         window.click("host-user", cx);
         #[cfg(target_os = "macos")]
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         #[cfg(not(target_os = "macos"))]
         window.press("ctrl-a", cx);
         window.press("backspace", cx);
@@ -893,7 +893,7 @@ async fn editing_the_host_moves_the_saved_password_with_it(cx: &mut TestAppConte
         window.render_frame(cx);
         assert!(window.find("host-password").visible());
         window.click("host-address", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("10.9.9.9", cx);
         window.click("commit", cx);
     })
@@ -941,7 +941,7 @@ async fn clearing_the_password_field_forgets_the_saved_password(cx: &mut TestApp
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("host-password", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.press("backspace", cx);
         window.click("commit", cx);
     })

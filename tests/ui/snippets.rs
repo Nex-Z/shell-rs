@@ -241,7 +241,7 @@ async fn a_snippet_is_made_edited_and_deleted(cx: &mut TestAppContext) {
     // Edited in the same dialog, where a click is told only to type it.
     dispatch_from_panel(cx, handle, EditSnippet(SnippetId(1)));
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("监听端口", cx);
         window.click("snippet-run-on-click", cx);
         window.click("commit", cx);
@@ -282,7 +282,7 @@ async fn a_category_is_made_renamed_and_deleted_with_its_snippets(cx: &mut TestA
     .await;
     in_frame(cx, handle, |window, cx| {
         window.click("snippet-category-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("部署", cx);
         window.click("commit", cx);
     });
@@ -311,7 +311,7 @@ async fn a_category_is_made_renamed_and_deleted_with_its_snippets(cx: &mut TestA
 
     dispatch_from_panel(cx, handle, RenameSnippetCategory(SnippetCategoryId(LOGS)));
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("日志查看", cx);
         window.click("commit", cx);
     });

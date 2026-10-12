@@ -801,10 +801,10 @@ async fn a_temporary_connection_has_every_feature_and_saves_nothing(cx: &mut Tes
         window.click("host-address", cx);
         window.input("10.0.0.9", cx);
         window.click("host-port", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("2222", cx);
         window.click("host-user", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("deploy", cx);
         window.click("host-password", cx);
         window.input("p@ss", cx);

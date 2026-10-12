@@ -190,7 +190,7 @@ async fn the_tabs_and_the_search_narrow_the_list(cx: &mut TestAppContext) {
     });
 
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("nothing-like-it", cx);
     });
     in_frame(cx, handle, |window, _| {
