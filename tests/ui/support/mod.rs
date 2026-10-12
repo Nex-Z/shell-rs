@@ -212,3 +212,18 @@ pub fn in_frame<R>(
     cx.run_until_parked();
     result
 }
+
+/// A child selected from the fake local pane uses native path separators.
+pub fn local_child(name: &str) -> String {
+    std::path::Path::new("/local/tester")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+/// A fake OS picker still returns an absolute path on the tested platform.
+pub const PICKED_DIRECTORY: &str = if cfg!(windows) {
+    "C:/picked"
+} else {
+    "/picked"
+};

@@ -465,7 +465,7 @@ async fn run(
 #[test]
 fn recursive_upload_deduplicates_sources_and_preserves_empty_directories_and_links() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let root = tmp.path().join("中文 目录");
         std::fs::create_dir_all(root.join("空/嵌套")).unwrap();
         std::fs::write(root.join("零 字节"), []).unwrap();
@@ -521,7 +521,7 @@ fn recursive_upload_deduplicates_sources_and_preserves_empty_directories_and_lin
 #[test]
 fn winscp_style_upload_finishes_without_a_verification_phase() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         let data = vec![73; 2 * 1024 * 1024 + 17];
         std::fs::write(&source, &data).unwrap();
@@ -570,7 +570,7 @@ fn winscp_style_upload_finishes_without_a_verification_phase() {
 #[test]
 fn resume_uses_remote_filepart_size_and_preserves_old_target() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         let data = vec![71; 150_000];
         std::fs::write(&source, &data).unwrap();
@@ -621,7 +621,7 @@ fn resume_uses_remote_filepart_size_and_preserves_old_target() {
 #[test]
 fn filepart_larger_than_source_requires_explicit_restart() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         std::fs::write(&source, vec![1; 100_000]).unwrap();
         let journal = Journal::new(tmp.path().join("journal"));
@@ -650,7 +650,7 @@ fn filepart_larger_than_source_requires_explicit_restart() {
 #[test]
 fn winscp_style_resume_does_not_prevalidate_the_source_version() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         let data = vec![1; 100_000];
         std::fs::write(&source, &data).unwrap();
@@ -688,7 +688,7 @@ fn winscp_style_resume_does_not_prevalidate_the_source_version() {
 #[test]
 fn winscp_style_resume_detects_filepart_without_a_local_record() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         let data = vec![3; 100_000];
         std::fs::write(&source, &data).unwrap();
@@ -717,7 +717,8 @@ fn winscp_style_resume_detects_filepart_without_a_local_record() {
 fn lost_replies_at_backup_publish_and_close_are_reconciled() {
     runtime().block_on(async {
         for fault in [Fault::Rename(1), Fault::Rename(2), Fault::Close] {
-            let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+            let tmp =
+                tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
             let source = tmp.path().join("file");
             std::fs::write(&source, b"new contents").unwrap();
             let journal = Journal::new(tmp.path().join("journal"));
@@ -740,7 +741,7 @@ fn lost_replies_at_backup_publish_and_close_are_reconciled() {
 #[test]
 fn cancellation_retains_journal_and_skip_does_not_overwrite() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         std::fs::write(&source, b"new").unwrap();
         let remote = Remote::new();
@@ -767,7 +768,7 @@ fn cancellation_retains_journal_and_skip_does_not_overwrite() {
 #[test]
 fn directory_permission_error_is_reported_as_failure() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("blocked");
         std::fs::create_dir(&source).unwrap();
         let remote = Remote::new();
@@ -795,7 +796,7 @@ fn directory_permission_error_is_reported_as_failure() {
 fn retrying_an_unreadable_folder_adds_only_its_files_to_the_upload() {
     use std::os::unix::fs::PermissionsExt as _;
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let folder = tmp.path().join("folder");
         std::fs::create_dir(&folder).unwrap();
         std::fs::write(folder.join("inside.bin"), vec![1; 300]).unwrap();
@@ -843,7 +844,7 @@ fn retrying_an_unreadable_folder_adds_only_its_files_to_the_upload() {
 #[test]
 fn retrying_an_unreadable_folder_adds_only_its_files_to_the_download() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let out = tmp.path().join("out");
         std::fs::create_dir(&out).unwrap();
         let remote = Remote::new();
@@ -896,7 +897,7 @@ fn paths_and_journals_reject_unsafe_identity() {
                 .as_str(),
             "/目录\\name"
         );
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("file");
         std::fs::write(&source, b"data").unwrap();
         let source_metadata = SourceMetadata::read(&source).await.unwrap();
@@ -978,7 +979,7 @@ fn local_listing_reports_the_path_people_type() {
 #[test]
 fn local_listing_rejects_unrepresentable_names() {
     use std::os::unix::ffi::OsStringExt as _;
-    let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
     std::fs::write(
         tmp.path().join(std::ffi::OsString::from_vec(vec![0xff])),
         [],
@@ -992,7 +993,8 @@ fn local_listing_rejects_unrepresentable_names() {
 fn openssh_protocol_uploads_offsets_links_metadata_and_replaces_readonly_targets() {
     runtime().block_on(async {
         use std::os::unix::fs::PermissionsExt as _;
-        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let temp =
+            tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let dest = temp.path().join("remote");
         let source = temp.path().join("中文 目录");
         std::fs::create_dir_all(source.join("空目录/嵌套")).unwrap();
@@ -1346,7 +1348,7 @@ async fn run_download(
 #[test]
 fn download_copies_trees_links_and_empty_directories_in_order() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let data: Vec<u8> = (0..2 * 1024 * 1024 + 13).map(|i| (i % 251) as u8).collect();
         for short_reads in [false, true] {
             let out = tmp.path().join(format!("out-{short_reads}"));
@@ -1360,7 +1362,13 @@ fn download_copies_trees_links_and_empty_directories_in_order() {
             remote.dir("/srv/中文 目录/嵌套", 0o755);
             remote.file("/srv/中文 目录/嵌套/b.txt", b"nested");
             remote.link("/srv/中文 目录/链接", "large.bin");
-            let answers = Answers::new(vec![]);
+            // Unix creates the link. Other platforms must report the unsupported
+            // item and continue only after an explicit answer.
+            let answers = Answers::new(if cfg!(unix) {
+                vec![]
+            } else {
+                vec![TransferChoice::Skip]
+            });
             let journal = DownloadJournal::new(tmp.path().join(format!("journal-{short_reads}")));
             let mut batch = download_batch(
                 &["/srv/中文 目录", "/srv/中文 目录/嵌套"],
@@ -1384,12 +1392,27 @@ fn download_copies_trees_links_and_empty_directories_in_order() {
                 Path::new("large.bin")
             );
             assert!(!partial_path(&root.join("large.bin")).exists());
-            assert_eq!(batch.meter.progress.failed(), 0);
+            assert_eq!(batch.meter.progress.failed(), usize::from(!cfg!(unix)));
             assert_eq!(
                 batch.meter.progress.direction(),
                 TransferDirection::Download
             );
-            assert!(answers.questions.lock().unwrap().is_empty());
+            if cfg!(unix) {
+                assert!(answers.questions.lock().unwrap().is_empty());
+            } else {
+                assert_eq!(
+                    *answers.questions.lock().unwrap(),
+                    [TransferQuestionKind::Error]
+                );
+                assert!(!root.join("链接").exists());
+                assert!(batch.meter.progress.details().iter().any(|detail| {
+                    detail.reason().is_some_and(|error| {
+                        error.contains(
+                            &crate::i18n::t!("sftp.download.links_unsupported").to_string(),
+                        )
+                    })
+                }));
+            }
             let modified = std::fs::metadata(root.join("large.bin"))
                 .unwrap()
                 .modified()
@@ -1405,7 +1428,7 @@ fn download_copies_trees_links_and_empty_directories_in_order() {
 #[test]
 fn download_resumes_from_the_partial_file_after_a_lost_connection() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let data: Vec<u8> = (0..300_000).map(|i| (i % 253) as u8).collect();
         let remote = Remote::new();
         remote.file("/big", &data);
@@ -1454,7 +1477,7 @@ fn download_resumes_from_the_partial_file_after_a_lost_connection() {
 #[test]
 fn download_asks_before_overwriting_and_keeps_the_replaced_permissions() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let target = tmp.path().join("file");
         std::fs::write(&target, b"old").unwrap();
         #[cfg(unix)]
@@ -1505,7 +1528,7 @@ fn download_asks_before_overwriting_and_keeps_the_replaced_permissions() {
 #[test]
 fn a_changed_remote_file_is_not_resumed_and_discard_cleans_up() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let remote = Remote::new();
         remote.file("/file", &vec![7; 200_000]);
         remote.fault.set(Some(Fault::Read(4)));
@@ -1575,7 +1598,7 @@ fn a_changed_remote_file_is_not_resumed_and_discard_cleans_up() {
 #[test]
 fn download_cancellation_keeps_the_partial_file() {
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let remote = Remote::new();
         remote.file("/file", &vec![1; 100_000]);
         let answers = Answers::new(vec![]);
@@ -1601,7 +1624,8 @@ fn download_cancellation_keeps_the_partial_file() {
 fn openssh_protocol_downloads_lists_owners_and_changes_files_without_following_links() {
     runtime().block_on(async {
         use std::os::unix::fs::PermissionsExt as _;
-        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let temp =
+            tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let served = temp.path().join("remote");
         let tree = served.join("树");
         std::fs::create_dir_all(tree.join("空目录")).unwrap();
@@ -1763,7 +1787,7 @@ fn scp_puts_a_copy_inside_a_directory_or_at_the_path_itself() {
 fn an_scp_upload_takes_the_destination_name_and_keeps_the_execute_bits() {
     use std::os::unix::fs::PermissionsExt as _;
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let source = tmp.path().join("build.sh");
         std::fs::write(&source, b"#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1816,7 +1840,7 @@ async fn batch_to(
 fn an_scp_download_takes_the_destination_name_and_keeps_the_execute_bits() {
     use std::os::unix::fs::PermissionsExt as _;
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let out = tmp.path().join("out");
         std::fs::create_dir(&out).unwrap();
         let remote = Remote::new();
@@ -2026,7 +2050,8 @@ fn a_save_that_fails_after_truncating_is_interrupted() {
 fn openssh_protocol_edits_in_place_through_links_keeping_mode_and_hard_links() {
     runtime().block_on(async {
         use std::os::unix::fs::PermissionsExt as _;
-        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let temp =
+            tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let served = temp.path().join("remote");
         std::fs::create_dir(&served).unwrap();
         let real = served.join("真的.conf");
@@ -2182,7 +2207,7 @@ async fn sync_batch(local: &Path, tmp: &Path, control: &TransferControl) -> Uplo
 fn a_sync_copies_only_what_changed_since_the_last() {
     use std::os::unix::fs::PermissionsExt as _;
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let dist = tmp.path().join("dist");
         std::fs::create_dir_all(dist.join("assets")).unwrap();
         std::fs::write(dist.join("index.html"), b"v1").unwrap();
@@ -2230,7 +2255,7 @@ fn a_sync_copies_only_what_changed_since_the_last() {
 fn a_sync_with_delete_removes_what_is_not_here_and_nothing_it_cannot_see() {
     use std::os::unix::fs::PermissionsExt as _;
     runtime().block_on(async {
-        let tmp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let tmp = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         let dist = tmp.path().join("dist");
         std::fs::create_dir_all(dist.join("sub")).unwrap();
         std::fs::create_dir_all(dist.join("locked")).unwrap();

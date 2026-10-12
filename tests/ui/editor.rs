@@ -385,7 +385,7 @@ async fn a_local_file_is_edited_on_this_machine(cx: &mut TestAppContext) {
     in_frame(cx, handle, |window, _| {
         assert_eq!(
             window.find(("editor-path", FIRST.0)).label(),
-            Some(LOCAL_FILE)
+            Some(local_child("文件 甲.txt").as_str())
         );
         assert_eq!(window.find("status-connection").label(), Some("本机文件"));
     });
@@ -406,7 +406,7 @@ async fn a_local_file_is_edited_on_this_machine(cx: &mut TestAppContext) {
             .calls
             .lock()
             .unwrap()
-            .contains(&format!("write {LOCAL_FILE}"))
+            .contains(&format!("write {}", local_child("文件 甲.txt")))
     );
     // Nothing went to the server.
     assert!(provider.writes.lock().unwrap().is_empty());

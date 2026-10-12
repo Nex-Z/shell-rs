@@ -2,6 +2,7 @@
 //! commands, selection and the connection.
 
 use crate::support::*;
+use std::path::Path;
 
 #[gpui_kit::test]
 async fn sftp_button_opens_explorer_and_navigates(cx: &mut TestAppContext) {
@@ -782,7 +783,11 @@ async fn sftp_path_label_opens_ancestors_and_the_open_directory_dialog(cx: &mut 
     cx.run_until_parked();
     assert_eq!(
         cx.read_from_clipboard().and_then(|item| item.text()),
-        Some("/local/tester/目录\n/local/tester/文件 甲.txt".into())
+        Some(format!(
+            "{}\n{}",
+            local_child("目录"),
+            local_child("文件 甲.txt")
+        ))
     );
 }
 
@@ -909,18 +914,21 @@ async fn sftp_bookmark_dialog_adds_orders_removes_and_opens(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.simulate_path_prompt_response(|options| {
         assert!(options.directories && !options.files && !options.multiple);
-        Some(vec!["/picked".into()])
+        Some(vec![PICKED_DIRECTORY.into()])
     });
     cx.run_until_parked();
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(window.find("open-directory-path").value(), Some("/picked"));
+        assert_eq!(
+            window.find("open-directory-path").value(),
+            Some(PICKED_DIRECTORY)
+        );
         window.click("open-directory-confirm", cx);
     })
     .unwrap();
     cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
         window.render_frame(cx);
-        window.find("local-path").value() == Some("/picked")
+        window.find("local-path").value().map(Path::new) == Some(Path::new(PICKED_DIRECTORY))
     })
     .await;
 }
@@ -1394,7 +1402,10 @@ async fn sftp_file_commands_confirm_validate_and_send_one_operation(cx: &mut Tes
     .await;
     assert_eq!(
         local.calls.lock().unwrap()[0],
-        r#"trash ["/local/tester/文件 乙.txt"]"#
+        format!(
+            "trash {:?}",
+            [std::path::PathBuf::from(local_child("文件 乙.txt"))]
+        )
     );
 
     // 重命名 checks the name against the listing before sending anything.
