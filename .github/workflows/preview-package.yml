@@ -20,6 +20,8 @@ defaults:
     shell: bash
 jobs:
   linux:
+    # This preview iteration prioritizes the requested Windows package.
+    if: ${{ false }}
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
@@ -75,7 +77,6 @@ jobs:
         retention-days: 7
         if-no-files-found: warn
   windows:
-    needs: linux
     runs-on: windows-2025
     timeout-minutes: 180
     steps:
