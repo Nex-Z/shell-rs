@@ -13,7 +13,7 @@ use crate::app::{
     EditHost, OpenExplorer, ReconnectTerminal, RenameTerminal,
 };
 use crate::connection::{ConnectionPrompt, ConnectionPromptReply};
-use crate::host::{HostId, HostOs, HostStore};
+use crate::host::{ConnectionState, HostId, HostOs, HostStore};
 use crate::i18n::t;
 use crate::shared::{ClosableTabTitle, HostMark, LatencyLabel, RenamableTab, close_tab_items};
 
@@ -77,6 +77,7 @@ impl TerminalPanel {
                 cx,
             );
             terminal.set_menu_items(connection_menu_items(id, host_id));
+            terminal.set_reconnect_action(ReconnectTerminal(id), cx);
             terminal
         });
         let subscriptions = vec![
@@ -246,7 +247,15 @@ impl Panel for TerminalPanel {
             .and_then(|host| host.os);
         let mark = HostMark::new(("terminal-tab-os", id.0), self.default_title(cx), os).small();
         let tab_menu = self.tab_menu(cx);
+        let state = match self.lifecycle(cx) {
+            TerminalLifecycle::Starting => ConnectionState::Connecting,
+            TerminalLifecycle::Running => ConnectionState::Connected,
+            TerminalLifecycle::Exited { .. }
+            | TerminalLifecycle::Failed(_)
+            | TerminalLifecycle::Closing => ConnectionState::Disconnected,
+        };
         ClosableTabTitle::new(("terminal-tab", id.0), mark, self.tab_title(cx))
+            .connection_state(state)
             .closable(("close-terminal", id.0), Box::new(CloseTerminal(id)))
             .context_menu(move |menu, _, cx| tab_menu.build(menu, cx))
     }

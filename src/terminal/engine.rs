@@ -103,6 +103,7 @@ pub struct TerminalEngine {
     /// lines against them; swapped when the settings change them.
     highlights: SharedHighlights,
     _highlights_observer: gpui_kit::Subscription,
+    reconnect_on_enter: bool,
     generation: u64,
     size: TerminalSize,
     event_sender: mpsc::Sender<TerminalUiEvent>,
@@ -142,6 +143,7 @@ impl TerminalEngine {
             url_search: RefCell::new(url_search()),
             highlights,
             _highlights_observer: highlights_observer,
+            reconnect_on_enter: false,
             generation,
             size,
             event_sender,
@@ -201,10 +203,12 @@ impl TerminalEngine {
             TerminalUiEventKind::Title(title) => self.title = sanitize_title(&title),
             TerminalUiEventKind::ResetTitle => self.title = None,
             TerminalUiEventKind::Exited { code, signal } => {
+                self.append_reconnect_hint();
                 self.lifecycle = TerminalLifecycle::Exited { code, signal };
                 self.latency = None;
             }
             TerminalUiEventKind::Failed(error) => {
+                self.append_reconnect_hint();
                 self.lifecycle = TerminalLifecycle::Failed(error);
                 self.latency = None;
             }
@@ -238,6 +242,16 @@ impl TerminalEngine {
             }
         }
         None
+    }
+
+    pub(super) fn enable_reconnect_on_enter(&mut self) {
+        self.reconnect_on_enter = true;
+    }
+
+    fn append_reconnect_hint(&self) {
+        if self.reconnect_on_enter {
+            append_message(&self.runtime.term, &t!("terminal.notice.enter_reconnect"));
+        }
     }
 
     pub fn restart(&mut self, cx: &mut gpui_kit::Context<Self>) {
@@ -282,6 +296,7 @@ impl TerminalEngine {
         self.generation = self.generation.saturating_add(1);
         self.runtime.shutdown();
         append_message(&self.runtime.term, message);
+        self.append_reconnect_hint();
         self.lifecycle = TerminalLifecycle::Exited {
             code: 0,
             signal: None,

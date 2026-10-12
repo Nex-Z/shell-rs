@@ -142,6 +142,13 @@ async fn authentication_prompt_is_masked_and_drives_connected_state(cx: &mut Tes
 
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
+        assert_eq!(
+            window
+                .within(("terminal-tab", 1u64))
+                .find("connection-status")
+                .label(),
+            Some("连接中")
+        );
         let password = window.find(("ssh-auth-answer", 0usize));
         assert_eq!(
             password.value(),
@@ -156,6 +163,11 @@ async fn authentication_prompt_is_masked_and_drives_connected_state(cx: &mut Tes
     cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
         window.render_frame(cx);
         window.find("status-connection").label() == Some("已连接 prompt-host")
+            && window
+                .within(("terminal-tab", 1u64))
+                .find("connection-status")
+                .label()
+                == Some("已连接")
     })
     .await;
 
@@ -213,6 +225,11 @@ async fn canceling_unknown_host_prompt_keeps_host_disconnected(cx: &mut TestAppC
     cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
         window.render_frame(cx);
         window.find("status-connection").label() == Some("未连接 prompt-host")
+            && window
+                .within(("terminal-tab", 1u64))
+                .find("connection-status")
+                .label()
+                == Some("未连接")
             && factory.canceled.load(Ordering::SeqCst) == 1
     })
     .await;
@@ -448,6 +465,28 @@ async fn disconnecting_one_tab_leaves_the_other_tabs_of_its_host(cx: &mut TestAp
 
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
+        for id in [INITIAL_WEB_TERMINAL, second.0] {
+            let tab = window.within(("terminal-tab", id));
+            let mark = tab.find(("terminal-tab-os", id)).bounds();
+            let dot = tab.find("connection-status").bounds();
+            let title = window.find(("terminal-tab", id)).bounds();
+            assert!(
+                dot.left() > mark.right(),
+                "status must sit outside the icon"
+            );
+            assert!(dot.top() > mark.bottom(), "status must not cover the icon");
+            assert!(dot.right() < window.find(("close-terminal", id)).bounds().left());
+            assert!(dot.bottom() <= title.bottom(), "status must not be clipped");
+            assert!(mark.top() >= title.top());
+            assert!(title.size.height <= px(30.), "keep the dock's title height");
+            assert_eq!(
+                window
+                    .within(("terminal-tab", id))
+                    .find("connection-status")
+                    .label(),
+                Some("已连接")
+            );
+        }
         window.dispatch_action(Box::new(DisconnectTerminal(second)), cx);
     })
     .unwrap();
@@ -477,11 +516,68 @@ async fn disconnecting_one_tab_leaves_the_other_tabs_of_its_host(cx: &mut TestAp
 
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.dispatch_action(Box::new(ReconnectTerminal(second)), cx);
+        assert_eq!(
+            window
+                .within(("terminal-tab", INITIAL_WEB_TERMINAL))
+                .find("connection-status")
+                .label(),
+            Some("已连接")
+        );
+        assert_eq!(
+            window
+                .within(("terminal-tab", second.0))
+                .find("connection-status")
+                .label(),
+            Some("未连接")
+        );
+        window.click(("terminal", second.0), cx);
+        window.press("enter", cx);
     })
     .unwrap();
-    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
         remote_lifecycle(&workspace, second, cx) == TerminalLifecycle::Running
+            && window
+                .within(("terminal-tab", second.0))
+                .find("connection-status")
+                .label()
+                == Some("已连接")
+    })
+    .await;
+}
+
+#[gpui_kit::test]
+async fn failed_connection_tab_reports_disconnected_then_recovers(cx: &mut TestAppContext) {
+    let (store, host_id) = one_host_store(AuthKind::Password);
+    let factory = Arc::new(FakeTerminalFactory::fail_first());
+    let (handle, workspace) = open_workspace_with_remote_factory(cx, store, factory);
+    let terminal_id = RemoteTerminalId(1);
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(ConnectHost(host_id)), cx);
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        matches!(
+            remote_lifecycle(&workspace, terminal_id, cx),
+            TerminalLifecycle::Failed(_)
+        ) && window
+            .within(("terminal-tab", terminal_id.0))
+            .find("connection-status")
+            .label()
+            == Some("未连接")
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(ReconnectTerminal(terminal_id)), cx);
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        remote_lifecycle(&workspace, terminal_id, cx) == TerminalLifecycle::Running
+            && window
+                .within(("terminal-tab", terminal_id.0))
+                .find("connection-status")
+                .label()
+                == Some("已连接")
     })
     .await;
 }
@@ -911,4 +1007,161 @@ async fn a_link_that_cannot_be_read_says_why_and_opens_nothing(cx: &mut TestAppC
     workspace.read_with(cx, |workspace, cx| {
         assert!(workspace.store().read(cx).host(LINK_HOST).is_none());
     });
+}
+
+/// Initial errors and later exits both retain their tab and retry through
+/// that tab's regular reconnect action, without leaking Enter to the shell.
+async fn enter_reconnects_stopped_remote(
+    cx: &mut TestAppContext,
+    factory: Arc<FakeTerminalFactory>,
+) {
+    let (store, host) = one_host_store(AuthKind::Password);
+    let (handle, workspace) = open_workspace_with_remote_factory(cx, store, factory.clone());
+    let terminal = RemoteTerminalId(1);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .within("host-tree")
+            .double_click(("host-row", host.0), cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        matches!(
+            remote_lifecycle(&workspace, terminal, cx),
+            TerminalLifecycle::Failed(_) | TerminalLifecycle::Exited { .. }
+        )
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let screen = workspace
+            .read(cx)
+            .remote_terminal(terminal)
+            .unwrap()
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .screen_text(cx);
+        assert!(screen.contains("按 Enter 重新连接"), "{screen}");
+        window.click(("terminal", terminal.0), cx);
+        for key in ["shift-enter", "ctrl-enter", "alt-enter"] {
+            window.press(key, cx);
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string("\n".into()));
+        window.dispatch_action(Box::new(shellrs::app::PasteTerminal), cx);
+        window.dispatch_action(Box::new(FindInTerminal), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("terminal-find", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        factory.starts(),
+        1,
+        "modifiers, paste and find must not reconnect"
+    );
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("terminal", terminal.0), cx);
+        window.press("enter", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        remote_lifecycle(&workspace, terminal, cx) == TerminalLifecycle::Running
+    })
+    .await;
+    assert_eq!(factory.starts(), 2);
+    assert_eq!(
+        factory.written_text(),
+        "",
+        "reconnect Enter must not reach the new shell"
+    );
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(("terminal", terminal.0)).focused(), Some(true));
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        factory.written_text() == "\r"
+    })
+    .await;
+    assert_eq!(factory.starts(), 2, "connected Enter is ordinary input");
+}
+
+#[gpui_kit::test]
+async fn enter_reconnects_failed_remote(cx: &mut TestAppContext) {
+    enter_reconnects_stopped_remote(cx, Arc::new(FakeTerminalFactory::fail_first())).await;
+}
+
+#[gpui_kit::test]
+async fn enter_reconnects_exited_remote(cx: &mut TestAppContext) {
+    enter_reconnects_stopped_remote(cx, Arc::new(FakeTerminalFactory::exit_first())).await;
+}
+
+#[gpui_kit::test]
+async fn enter_retries_canceled_authentication_in_the_same_tab(cx: &mut TestAppContext) {
+    let (store, host) = one_host_store(AuthKind::Password);
+    let factory = Arc::new(PromptTerminalFactory::new(PromptBehavior::Authentication));
+    let (handle, workspace) = open_workspace_with_remote_factory(cx, store, factory.clone());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .within("host-tree")
+            .double_click(("host-row", host.0), cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        window.try_find("ssh-auth-submit").is_some()
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("cancel", cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        matches!(
+            remote_lifecycle(&workspace, RemoteTerminalId(1), cx),
+            TerminalLifecycle::Exited { .. }
+        ) && window.try_find("ssh-auth-submit").is_none()
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("terminal", 1_u64), cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        window.try_find("ssh-auth-submit").is_some()
+    })
+    .await;
+    cx.update(|cx| {
+        assert_eq!(
+            remote_lifecycle(&workspace, RemoteTerminalId(1), cx),
+            TerminalLifecycle::Starting
+        );
+        assert!(
+            workspace
+                .read(cx)
+                .remote_terminal(RemoteTerminalId(2))
+                .is_none()
+        );
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("cancel", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
 }

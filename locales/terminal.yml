@@ -198,3 +198,7 @@ terminal.pty.resize_error:
 terminal.pty.exit_status:
   zh-CN: 无法读取 shell 退出状态
   en: Couldn’t read the shell’s exit status
+
+terminal.notice.enter_reconnect:
+  zh-CN: 按 Enter 重新连接
+  en: Press Enter to reconnect
