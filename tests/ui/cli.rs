@@ -98,10 +98,21 @@ fn a_host_from_the_cli_lands_in_the_tree_with_its_group_and_password(cx: &mut Te
         host: Some("10.0.9.2".into()),
         ..HostFields::default()
     };
-    let error = apply(cx, handle, &workspace, CliChange::CreateHost(nameless)).unwrap_err();
+    let Ok(Reply::Host(created)) = apply(cx, handle, &workspace, CliChange::CreateHost(nameless))
+    else {
+        panic!("host without a name not created");
+    };
+    assert_eq!(created.name, "10.0.9.2");
+    let error = apply(
+        cx,
+        handle,
+        &workspace,
+        CliChange::CreateHost(HostFields::default()),
+    )
+    .unwrap_err();
     assert_eq!(
         (error.code, error.message.as_str()),
-        (ErrorCode::BadRequest, "请输入名称")
+        (ErrorCode::BadRequest, "请输入地址")
     );
 }
 

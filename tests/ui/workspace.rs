@@ -749,7 +749,7 @@ async fn a_dialog_says_what_is_wrong_in_a_notification_that_goes_with_it(cx: &mu
     cx.run_until_parked();
 
     for (open, field, error) in [
-        ("new-host-panel", "host-name", "请输入名称"),
+        ("new-host-panel", "host-address", "请输入地址"),
         ("temporary-connection", "host-address", "请输入地址"),
         ("new-group", "group-name", "请输入分组名称"),
         ("new-forward", "forward-name", "请选择端口转发经由的主机"),

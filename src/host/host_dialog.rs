@@ -677,17 +677,13 @@ impl HostForm {
     /// Validate and write to the store. Returns whether the dialog may close.
     pub fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let name = self.name.read(cx).value().trim().to_string();
-        let checked = if name.is_empty() {
-            Err(HostDraftError::Name.message())
-        } else {
-            self.endpoint(cx).and_then(|endpoint| {
-                Ok((
-                    endpoint,
-                    self.committed_login(cx)?,
-                    self.committed_route(cx)?,
-                ))
-            })
-        };
+        let checked = self.endpoint(cx).and_then(|endpoint| {
+            Ok((
+                endpoint,
+                self.committed_login(cx)?,
+                self.committed_route(cx)?,
+            ))
+        });
         let ((host, port), login, route) = match checked {
             Ok(checked) => checked,
             Err(error) => {
@@ -695,6 +691,8 @@ impl HostForm {
                 return false;
             }
         };
+
+        let name = if name.is_empty() { host.clone() } else { name };
 
         let group = self
             .group

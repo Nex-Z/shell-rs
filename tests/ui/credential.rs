@@ -234,8 +234,6 @@ async fn a_host_can_use_a_credential_instead_of_typing_a_login(cx: &mut TestAppC
     );
     in_frame(cx, handle, |window, cx| window.click("new-host-panel", cx));
     in_frame(cx, handle, |window, cx| {
-        window.click("host-name", cx);
-        window.input("web-01", cx);
         window.click("host-address", cx);
         window.input("10.0.1.12", cx);
         window.within("host-auth-source").click(1usize, cx);
@@ -274,8 +272,8 @@ async fn a_host_can_use_a_credential_instead_of_typing_a_login(cx: &mut TestAppC
         let created = store
             .hosts()
             .iter()
-            .find(|host| host.name == "web-01")
-            .expect("web-01 inserted");
+            .find(|host| host.name == "10.0.1.12")
+            .expect("host named after its address inserted");
         assert_eq!(created.credential, Some(credential));
         assert_eq!(created.user.as_ref(), "deploy");
         assert_eq!(created.auth, AuthKind::Password);
