@@ -24,6 +24,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
+    input::{InputEvent, InputState},
     menu::{ContextMenuExt as _, DropdownMenu as _},
     searchable_list::{SearchableGroup, SearchableListItem, SearchableVec},
     select::{Select, SelectEvent, SelectState},
@@ -176,6 +177,9 @@ type PathChoices = SearchableVec<SearchableGroup<PathChoice>>;
 
 pub struct FilePane {
     pub(super) side: PaneSide,
+    pub(super) compact: bool,
+    pub(super) path_input: Entity<InputState>,
+    pub(super) editing_path: bool,
     /// The SFTP tab this pane belongs to, which its commands address.
     explorer: ExplorerId,
     /// The host whose bookmarks it shows.
@@ -231,6 +235,16 @@ pub struct FilePane {
     load_task: Option<Task<()>>,
 }
 impl FilePane {
+    pub(super) fn make_compact(&mut self, cx: &mut Context<Self>) {
+        self.compact = true;
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().make_compact();
+            table.refresh(cx);
+        });
+        self.sync_listing(cx);
+        cx.notify();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         side: PaneSide,
@@ -253,7 +267,27 @@ impl FilePane {
                 .cell_selectable(false)
         });
         let path_select = cx.new(|cx| SelectState::new(PathChoices::new(vec![]), None, window, cx));
+        let path_input = cx.new(|cx| InputState::new(window, cx));
         let subscriptions = vec![
+            cx.subscribe_in(&path_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Blur) && this.editing_path {
+                    // Leaving the path input cancels editing without taking focus
+                    // back from the terminal or applying an uncommitted path.
+                    this.editing_path = false;
+                    cx.notify();
+                } else if matches!(event, InputEvent::PressEnter { .. }) && this.editing_path {
+                    let path = this.path_input.read(cx).value().to_string();
+                    this.finish_path_edit(window, cx);
+                    this.dispatch_command(
+                        ExplorerCommand::Navigate {
+                            remote: this.is_remote(),
+                            path,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            }),
             cx.subscribe_in(
                 &path_select,
                 window,
@@ -291,6 +325,9 @@ impl FilePane {
         ];
         let mut pane = Self {
             side,
+            compact: false,
+            path_input,
+            editing_path: false,
             explorer,
             host_id,
             path: home.clone(),
@@ -515,6 +552,7 @@ impl FilePane {
             path: self.path.clone(),
             selection: Rc::new(self.selection.clone()),
             transfer_enabled: self.transfer_enabled,
+            compact: self.compact,
             dispatch: Some(self.dispatch.clone()),
             pane: Some(cx.entity().downgrade()),
             menu_hit: self.menu_hit.clone(),
@@ -1289,6 +1327,71 @@ impl Render for FilePane {
                     .disabled(!state.can_modify)
                     .dropdown_menu(move |popup, _, _| new_menu(popup, &menu))
             });
+        let navigation = if self.compact {
+            let hidden_tip = if state.show_hidden {
+                t!("explorer.toolbar.hide_hidden_files")
+            } else {
+                t!("explorer.command.show_hidden_files")
+            };
+            toolbar()
+                .child(
+                    tool(
+                        "up",
+                        Icon::new(CatalogIcon::FolderUp),
+                        t!("explorer.command.up"),
+                        ExplorerCommand::Up { remote },
+                    )
+                    .disabled(!navigable || !state.can_go_up),
+                )
+                .child(
+                    tool(
+                        "home",
+                        Icon::new(CatalogIcon::House),
+                        t!("explorer.command.home"),
+                        ExplorerCommand::Home { remote },
+                    )
+                    .disabled(!navigable || !state.can_go_home),
+                )
+                .child(
+                    tool(
+                        "refresh",
+                        Icon::new(CatalogIcon::RefreshCw),
+                        t!("explorer.command.refresh"),
+                        ExplorerCommand::Refresh { remote },
+                    )
+                    .disabled(!navigable),
+                )
+                .child(
+                    tool(
+                        "bookmarks",
+                        Icon::new(CatalogIcon::Bookmark),
+                        t!("explorer.command.open_directory"),
+                        ExplorerCommand::OpenDirectory { remote },
+                    )
+                    .disabled(!navigable),
+                )
+                .child(
+                    Button::new("hidden-files")
+                        .ghost()
+                        .small()
+                        .icon(Icon::new(if state.show_hidden {
+                            CatalogIcon::Eye
+                        } else {
+                            CatalogIcon::EyeOff
+                        }))
+                        .accessibility_label(hidden_tip.clone())
+                        .tooltip(hidden_tip)
+                        .on_click({
+                            let dispatch = self.dispatch.clone();
+                            let side = self.side;
+                            move |_, window, cx| {
+                                dispatch.dispatch_action(&ToggleHiddenFiles(side), window, cx)
+                            }
+                        }),
+                )
+        } else {
+            navigation
+        };
         let pane = cx.entity().downgrade();
         let menu_hit = self.menu_hit.clone();
         v_flex()
@@ -1297,7 +1400,7 @@ impl Render for FilePane {
             .size_full()
             .min_w_0()
             .child(frame(navigation))
-            .child(frame(operations))
+            .when(!self.compact, |pane| pane.child(frame(operations)))
             .child(self.render_path_label(window, cx))
             .child(
                 div()

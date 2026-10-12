@@ -127,9 +127,13 @@ impl Workspace {
                 cx.notify();
             }
             EditorPanelEvent::Closed(id) => {
+                let host = editor.read(cx).host_id();
                 self.editors.remove(id);
                 if self.active_tab == Some(CenterTab::Editor(*id)) {
                     self.set_active_tab(None, window, cx);
+                }
+                if let Some(host) = host {
+                    self.forget_unused_temporary_host(host, window, cx);
                 }
                 cx.notify();
             }

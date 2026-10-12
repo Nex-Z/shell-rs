@@ -8,6 +8,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     progress::Progress,
+    tooltip::Tooltip,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -74,11 +75,17 @@ impl ExplorerPanel {
                     .px_2()
                     .py_1()
                     .gap_1()
-                    .child(div().text_sm().child(if unfinished > 0 {
-                        t!("explorer.queue.title_count", unfinished = unfinished)
-                    } else {
-                        t!("explorer.queue.title")
-                    }))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(if unfinished > 0 {
+                                t!("explorer.queue.title_count", unfinished = unfinished)
+                            } else {
+                                t!("explorer.queue.title")
+                            }),
+                    )
                     .child(div().flex_1())
                     .child(tool(
                         "resume-transfer",
@@ -116,37 +123,39 @@ impl ExplorerPanel {
                         ExplorerCommand::ClearFinishedTransfers,
                     )),
             )
-            .child(
-                h_flex()
-                    .px_2()
-                    .py_0p5()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .bg(theme.muted)
-                    .child(fixed(OPERATION).child(t!("explorer.queue.column.operation")))
-                    .child(flexible().child(t!("explorer.queue.column.source")))
-                    .child(flexible().child(t!("explorer.queue.column.target")))
-                    .child(
-                        fixed(TRANSFERRED)
-                            .justify_end()
-                            .child(t!("explorer.queue.column.transferred")),
-                    )
-                    .child(
-                        fixed(TIME)
-                            .justify_end()
-                            .child(t!("explorer.queue.column.time")),
-                    )
-                    .child(
-                        fixed(SPEED)
-                            .justify_end()
-                            .child(t!("explorer.queue.column.speed")),
-                    )
-                    .child(
-                        fixed(PROGRESS)
-                            .pl_3()
-                            .child(t!("explorer.queue.column.progress")),
-                    ),
-            )
+            .when(!self.sidebar, |queue| {
+                queue.child(
+                    h_flex()
+                        .px_2()
+                        .py_0p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .bg(theme.muted)
+                        .child(fixed(OPERATION).child(t!("explorer.queue.column.operation")))
+                        .child(flexible().child(t!("explorer.queue.column.source")))
+                        .child(flexible().child(t!("explorer.queue.column.target")))
+                        .child(
+                            fixed(TRANSFERRED)
+                                .justify_end()
+                                .child(t!("explorer.queue.column.transferred")),
+                        )
+                        .child(
+                            fixed(TIME)
+                                .justify_end()
+                                .child(t!("explorer.queue.column.time")),
+                        )
+                        .child(
+                            fixed(SPEED)
+                                .justify_end()
+                                .child(t!("explorer.queue.column.speed")),
+                        )
+                        .child(
+                            fixed(PROGRESS)
+                                .pl_3()
+                                .child(t!("explorer.queue.column.progress")),
+                        ),
+                )
+            })
             .child(
                 v_flex()
                     .id("transfer-queue-rows")
@@ -157,6 +166,26 @@ impl ExplorerPanel {
                         let id = entry.id();
                         let is_head = queue.head().is_some_and(|head| head.id() == id);
                         let expanded = queue.is_expanded(id);
+                        if self.sidebar {
+                            return v_flex()
+                                .child(compact_batch_row(
+                                    entry,
+                                    Row {
+                                        is_head,
+                                        selected: queue.is_selected(id),
+                                        expanded,
+                                    },
+                                    (
+                                        on(ExplorerCommand::SelectQueueEntry { id: id.0 }),
+                                        on(ExplorerCommand::ToggleQueueEntry { id: id.0 }),
+                                    ),
+                                    cx,
+                                ))
+                                .when(expanded, |this| {
+                                    this.child(item_results(entry, self.sidebar, cx))
+                                })
+                                .into_any_element();
+                        }
                         v_flex()
                             .child(batch_row(
                                 entry,
@@ -173,7 +202,10 @@ impl ExplorerPanel {
                                 cx,
                             ))
                             .children(file_row(entry, size_format, cx))
-                            .when(expanded, |this| this.child(item_results(entry, cx)))
+                            .when(expanded, |this| {
+                                this.child(item_results(entry, self.sidebar, cx))
+                            })
+                            .into_any_element()
                     })),
             )
     }
@@ -287,6 +319,121 @@ fn batch_row(
         )))
 }
 
+/// The same queue batch in the narrow file sidebar: source, destination,
+/// state and progress on separate lines rather than off-screen columns.
+fn compact_batch_row(
+    entry: &QueueEntry,
+    row: Row,
+    (select, toggle): (
+        impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ),
+    cx: &Context<ExplorerPanel>,
+) -> impl IntoElement {
+    let id = entry.id().0;
+    let status = entry.status();
+    let status_id: ElementId = if row.is_head {
+        "transfer-status".into()
+    } else {
+        ("queue-status", id).into()
+    };
+    let progress = entry.progress();
+    let direction = match entry.job().direction() {
+        TransferDirection::Upload => CatalogIcon::Upload,
+        TransferDirection::Download => CatalogIcon::Download,
+    };
+    v_flex()
+        .id(("queue-entry", id))
+        .test_support()
+        .aria_selected(row.selected)
+        .aria_label(status.clone())
+        .px_2()
+        .py_1()
+        .gap_1()
+        .min_w_0()
+        .text_xs()
+        .when(row.selected, |this| this.bg(cx.theme().list_active))
+        .when(!row.selected, |this| {
+            this.hover(|style| style.bg(cx.theme().list_hover))
+        })
+        .on_click(select)
+        .child(
+            h_flex()
+                .gap_1()
+                .min_w_0()
+                .child(
+                    Button::new(("queue-expand", id))
+                        .ghost()
+                        .xsmall()
+                        .icon(Icon::new(if row.expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        }))
+                        .tooltip(if row.expanded {
+                            t!("explorer.queue.hide_results")
+                        } else {
+                            t!("explorer.queue.show_results")
+                        })
+                        .on_click(toggle),
+                )
+                .child(Icon::new(direction).small())
+                .child(div().min_w_0().truncate().child(entry.job().source_label())),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_color(cx.theme().muted_foreground)
+                .child(entry.job().target().to_string()),
+        )
+        .child(
+            v_flex()
+                .id(status_id)
+                .test_support()
+                .aria_label(status.clone())
+                .w_full()
+                .min_w_0()
+                .gap_1()
+                .tooltip({
+                    let status = status.clone();
+                    move |window, cx| Tooltip::new(status.clone()).build(window, cx)
+                })
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_normal()
+                        .child(status),
+                )
+                .when_some(
+                    progress.filter(|p| p.phase() == TransferPhase::Transferring),
+                    |this, progress| {
+                        this.child(
+                            Progress::new(("queue-bar", id))
+                                .value(progress.fraction() * 100.)
+                                .small(),
+                        )
+                    },
+                ),
+        )
+        .when_some(
+            progress.filter(|p| !p.current_source().is_empty()),
+            |this, progress| {
+                this.child(
+                    div()
+                        .id(("queue-file", id))
+                        .test_support()
+                        .aria_label(progress.current_source().to_string())
+                        .min_w_0()
+                        .truncate()
+                        .child(progress.current_source().to_string()),
+                )
+            },
+        )
+}
+
 /// The file in flight, beneath its running batch, with its own bar.
 fn file_row(
     entry: &QueueEntry,
@@ -329,7 +476,11 @@ fn file_row(
 
 /// How each item of an unfolded batch ended, the latest on top. Items are
 /// listed as they end, so until one does, it says so instead.
-fn item_results(entry: &QueueEntry, cx: &Context<ExplorerPanel>) -> impl IntoElement {
+fn item_results(
+    entry: &QueueEntry,
+    compact: bool,
+    cx: &Context<ExplorerPanel>,
+) -> impl IntoElement {
     let theme = cx.theme();
     let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
     let details = entry
@@ -340,7 +491,9 @@ fn item_results(entry: &QueueEntry, cx: &Context<ExplorerPanel>) -> impl IntoEle
     v_flex()
         .id(("transfer-detail-list", entry.id().0))
         .test_support()
-        .pl(px(OPERATION))
+        .when(!compact, |this| this.pl(px(OPERATION)))
+        .min_w_0()
+        .overflow_hidden()
         .py_0p5()
         .text_xs()
         .when(details.is_empty(), |this| {

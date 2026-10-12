@@ -42,8 +42,23 @@ impl PaneMenuState {
     }
 }
 
+/// Upload into the displayed remote directory, independent of selection.
+fn upload_item(menu: PopupMenu, state: &PaneMenuState) -> PopupMenu {
+    if !state.remote {
+        return menu;
+    }
+    menu.menu_with_icon_and_disabled(
+        t!("explorer.command.upload"),
+        Icon::new(CatalogIcon::Upload),
+        state.action(ExplorerCommand::ChooseFiles),
+        !state.can_transfer,
+    )
+    .separator()
+}
+
 /// Right-click on a row: commands for the selection.
 pub(super) fn item_menu(menu: PopupMenu, state: &PaneMenuState) -> PopupMenu {
+    let menu = upload_item(menu, state);
     let remote = state.remote;
     let none = state.targets.is_empty() || !state.can_modify;
     // A directory has no 打开: a double-click goes in.
@@ -126,7 +141,7 @@ pub(super) fn directory_menu(
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let create = state.clone();
-    let menu = refresh_items(menu, state, window, cx)
+    let menu = refresh_items(upload_item(menu, state), state, window, cx)
         .menu_with_check(
             t!("explorer.command.show_hidden_files"),
             state.show_hidden,

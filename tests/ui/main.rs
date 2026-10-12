@@ -13,6 +13,7 @@ mod connection;
 mod credential;
 mod docker;
 mod editor;
+mod file_sidebar;
 mod forward;
 mod history;
 mod host_dialog;

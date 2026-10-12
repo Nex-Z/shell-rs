@@ -163,6 +163,7 @@ impl ExplorerPanel {
                     (Opening::Edit, Ok(Opened::Bytes(_))) => {}
                     (_, Err(failure)) => this.refuse_open(&location, opening, failure, window, cx),
                 }
+                cx.notify();
             });
         })
         .detach();

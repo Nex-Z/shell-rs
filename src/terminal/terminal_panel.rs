@@ -43,6 +43,7 @@ pub struct TerminalPanel {
     terminal: Entity<TerminalView>,
     remote_provider: SharedRemoteTerminalTransportProvider,
     tab_group: Option<WeakEntity<TabGroup>>,
+    dispatch: FocusHandle,
     /// A title the user gave this tab, to tell apart several connections to
     /// the same host. Lives as long as the tab, like the rest of the layout.
     custom_title: Option<SharedString>,
@@ -55,6 +56,7 @@ impl TerminalPanel {
         host_id: HostId,
         store: Entity<HostStore>,
         remote_provider: SharedRemoteTerminalTransportProvider,
+        dispatch: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -114,6 +116,7 @@ impl TerminalPanel {
             store,
             terminal,
             remote_provider,
+            dispatch,
             tab_group: None,
             custom_title: None,
             _subscriptions: subscriptions,
@@ -248,6 +251,7 @@ impl Panel for TerminalPanel {
         let tab_menu = self.tab_menu(cx);
         ClosableTabTitle::new(("terminal-tab", id.0), mark, self.tab_title(cx))
             .closable(("close-terminal", id.0), Box::new(CloseTerminal(id)))
+            .close_dispatch(self.dispatch.clone())
             .context_menu(move |menu, _, cx| tab_menu.build(menu, cx))
     }
 

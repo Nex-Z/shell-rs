@@ -5,7 +5,13 @@
 
 use super::{FilePane, PaneSide, pane_menu::path_menu, path_ancestors};
 use crate::app::ExplorerCommand;
-use gpui_kit::component::{ActiveTheme as _, h_flex, menu::ContextMenuExt as _};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    input::{Escape, Input},
+    menu::ContextMenuExt as _,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::ops::Range;
@@ -66,6 +72,9 @@ impl FilePane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.compact {
+            return self.render_editable_path(cx);
+        }
         let remote = self.side == PaneSide::Remote;
         let theme = cx.theme();
         // Both labels look alike: an underline for the current pane read as
@@ -183,6 +192,58 @@ impl FilePane {
             path_menu(menu, &state, window, cx)
         })
         .into_any_element()
+    }
+
+    fn render_editable_path(&self, cx: &mut Context<Self>) -> AnyElement {
+        let bar = h_flex()
+            .id(self.side.path_id())
+            .test_support()
+            .aria_label(self.side.path_label_name())
+            .aria_value(self.path.clone())
+            .min_w_0()
+            .px_2()
+            .py_1()
+            .bg(cx.theme().list_active)
+            .border_b_1()
+            .border_color(cx.theme().border);
+        if self.editing_path {
+            bar.on_action(cx.listener(|this, _: &Escape, window, cx| {
+                this.finish_path_edit(window, cx);
+            }))
+            .child(
+                Input::new(&self.path_input)
+                    .id("sidebar-path-input")
+                    .small()
+                    .w_full(),
+            )
+            .into_any_element()
+        } else {
+            bar.child(
+                Button::new("edit-sidebar-path")
+                    .ghost()
+                    .small()
+                    .w_full()
+                    .label(self.path.clone())
+                    .tooltip(crate::i18n::t!("tools.files.edit_path"))
+                    .disabled(!self.takes_commands())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.path_input.update(cx, |input, cx| {
+                            input.set_value(this.path.clone(), window, cx);
+                            input.select_all(window, cx);
+                        });
+                        this.editing_path = true;
+                        window.focus(&this.path_input.focus_handle(cx), cx);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+        }
+    }
+
+    pub(super) fn finish_path_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_path = false;
+        window.focus(&self.focus_handle(cx), cx);
+        cx.notify();
     }
 
     /// The parts to show, with the middle folded into `…` when the label

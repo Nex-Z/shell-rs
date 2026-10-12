@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use crate::app::{CatalogIcon, DOCKER_ICON, ToggleTool, ToolKind};
 use crate::docker::{Container, DockerObject, DockerPanel, ObjectSummary};
+use crate::explorer::{ExplorerId, ExplorerPanel};
 use crate::history::HistoryPanel;
 use crate::host::{HostId, HostOs, HostStore, SnippetCategoryId};
 use crate::i18n::t;
@@ -24,6 +25,7 @@ impl ToolKind {
         match self {
             ToolKind::Snippets => t!("tools.kind.snippets"),
             ToolKind::History => t!("tools.kind.history"),
+            ToolKind::Files => t!("tools.kind.files"),
             ToolKind::Docker => "Docker".into(),
             ToolKind::Services => t!("tools.kind.services"),
             ToolKind::Processes => t!("tools.kind.processes"),
@@ -38,6 +40,7 @@ impl ToolKind {
         Icon::new(match self {
             ToolKind::Snippets => CatalogIcon::CodeXml,
             ToolKind::History => CatalogIcon::RotateCcwClock,
+            ToolKind::Files => CatalogIcon::FolderTree,
             ToolKind::Docker => return Icon::default().path(DOCKER_ICON),
             ToolKind::Services => CatalogIcon::ServerCog,
             ToolKind::Processes => CatalogIcon::ListFilter,
@@ -46,9 +49,9 @@ impl ToolKind {
         })
     }
 
-    /// Whether the tool runs commands on a channel of its own beside the
-    /// terminal, which a terminal a bastion host opened cannot have. Command
-    /// snippets only type into the terminal.
+    /// Gate tools needing access beside the terminal: command channels or
+    /// the file sidebar's separate SFTP login. A bastion's external terminal
+    /// cannot have either; command snippets only type into the terminal.
     pub fn runs_commands(self) -> bool {
         !matches!(self, ToolKind::Snippets)
     }
@@ -61,7 +64,7 @@ impl ToolKind {
             | ToolKind::Processes
             | ToolKind::Connections
             | ToolKind::Monitor => os.is_none_or(HostOs::is_linux),
-            ToolKind::Snippets => true,
+            ToolKind::Snippets | ToolKind::Files => true,
             // Wherever `sh` runs `docker`: Linux, and a Mac with Docker
             // Desktop; and bash's history file wherever `sh` reads it.
             ToolKind::Docker | ToolKind::History => os != Some(HostOs::Windows),
@@ -73,6 +76,7 @@ impl ToolKind {
         match self {
             ToolKind::Snippets => "tool-snippets",
             ToolKind::History => "tool-history",
+            ToolKind::Files => "tool-files",
             ToolKind::Docker => "tool-docker",
             ToolKind::Services => "tool-services",
             ToolKind::Processes => "tool-processes",
@@ -115,6 +119,8 @@ pub struct ToolSidebar {
     monitor: Entity<MonitorPanel>,
     snippets: Entity<SnippetPanel>,
     history: Entity<HistoryPanel>,
+    /// The workspace owns each host's connection and queue, even while hidden.
+    files: Option<Entity<ExplorerPanel>>,
     docker: Entity<DockerPanel>,
     services: Entity<ServicePanel>,
     processes: Entity<ProcessPanel>,
@@ -139,11 +145,37 @@ impl ToolSidebar {
             monitor: cx.new(|_| MonitorPanel::new(dispatch.clone())),
             snippets: cx.new(|cx| SnippetPanel::new(store, dispatch.clone(), window, cx)),
             history: cx.new(|cx| HistoryPanel::new(dispatch.clone(), window, cx)),
+            files: None,
             docker: cx.new(|_| DockerPanel::new(dispatch.clone())),
             services: cx.new(|cx| ServicePanel::new(dispatch.clone(), window, cx)),
             processes: cx.new(|cx| ProcessPanel::new(dispatch.clone(), window, cx)),
             netstat: cx.new(|cx| NetstatPanel::new(dispatch, window, cx)),
             focus_handle: cx.focus_handle(),
+        }
+    }
+
+    pub fn set_files(
+        &mut self,
+        files: Option<Entity<ExplorerPanel>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.files != files {
+            if self.focus_handle.contains_focused(window, cx) {
+                window.focus(&self.focus_handle, cx);
+            }
+            self.files = files;
+            cx.notify();
+        }
+    }
+
+    pub fn forget_files(&mut self, id: ExplorerId, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .files
+            .as_ref()
+            .is_some_and(|panel| panel.read(cx).id() == id)
+        {
+            self.set_files(None, window, cx);
         }
     }
 
@@ -389,6 +421,10 @@ impl Render for ToolSidebar {
                 let panel = match self.tool {
                     ToolKind::Snippets => self.snippets.clone().into_any_element(),
                     ToolKind::History => self.history.clone().into_any_element(),
+                    ToolKind::Files => self.files.clone().map_or_else(
+                        || Empty.into_any_element(),
+                        |files| files.into_any_element(),
+                    ),
                     ToolKind::Docker => self.docker.clone().into_any_element(),
                     ToolKind::Services => self.services.clone().into_any_element(),
                     ToolKind::Processes => self.processes.clone().into_any_element(),

@@ -117,6 +117,7 @@ impl Workspace {
         self.count(match tool {
             ToolKind::Snippets => Counter::ToolSnippets,
             ToolKind::History => Counter::ToolHistory,
+            ToolKind::Files => Counter::ToolFiles,
             ToolKind::Docker => Counter::ToolDocker,
             ToolKind::Services => Counter::ToolServices,
             ToolKind::Processes => Counter::ToolProcesses,
