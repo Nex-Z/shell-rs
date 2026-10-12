@@ -9,7 +9,7 @@ use gpui_kit::component::{
 use shellrs::app::{ExplorerAction, ExplorerCommand, ToggleTool, ToolKind};
 use shellrs::editor::EditorId;
 use shellrs::sftp::{TransferPhase, TransferProgress};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Separate fake servers make a transfer sent to the wrong host observable.
 /// Record creation synchronously too: an unused sidebar must open no SFTP.
@@ -484,6 +484,12 @@ async fn choosing_uploads_keeps_the_original_host_and_directory_after_a_tab_swit
 async fn the_remote_download_command_confirms_the_selection_and_chosen_local_folder(
     cx: &mut TestAppContext,
 ) {
+    // A root-relative Unix path is not absolute on Windows. Model the
+    // native directory chooser with an actual platform-absolute folder.
+    let download_dir = tempfile::tempdir().unwrap();
+    let download_path = download_dir.path().to_path_buf();
+    assert!(download_path.is_absolute());
+    let download_target = download_path.to_string_lossy().into_owned();
     let (handle, workspace, servers) =
         open_files_workspace(cx, Arc::new(FakeSftpProvider::default()));
     let id = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
@@ -503,13 +509,13 @@ async fn the_remote_download_command_confirms_the_selection_and_chosen_local_fol
     assert!(cx.did_prompt_for_paths());
     cx.simulate_path_prompt_response(|options| {
         assert!(options.directories && !options.files && !options.multiple);
-        Some(vec!["/picked/downloads".into()])
+        Some(vec![download_path.clone()])
     });
     cx.run_until_parked();
     in_frame(cx, handle, |window, cx| {
         assert_eq!(
             window.find("download-target").value(),
-            Some("/picked/downloads")
+            Some(download_target.as_str())
         );
         window.click("download-confirm", cx);
     });
@@ -523,7 +529,7 @@ async fn the_remote_download_command_confirms_the_selection_and_chosen_local_fol
         downloads[0].sources(),
         [RemotePath::new("/home/tester/文件 甲.txt").unwrap()]
     );
-    assert_eq!(downloads[0].destination(), Path::new("/picked/downloads"));
+    assert_eq!(downloads[0].destination(), download_path.as_path());
     assert!(servers.other.downloads.lock().unwrap().is_empty());
 }
 
