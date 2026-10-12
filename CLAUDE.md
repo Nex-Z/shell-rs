@@ -269,6 +269,7 @@ cargo test -- --ignored                     # 会读写真实钥匙串的测试�
   - 每次先发 `none`，再按 `LoginMethod` 走。
   - 密码和口令先查钥匙串，查不到或被拒才弹框；被拒时不删钥匙串条目。
   - 失败的说明一律经 `describe_login_error`，它沿错误链找真正的原因。
+  - 主机密钥和记下的不一致时也问（`HostKeyChanged`）：「更新并连接」删掉这台主机（`host:port`）记下的全部密钥再记新的（同 `ssh-keygen -R`），「取消」不连。没人能答的（测试连接、exec、CLI 传输、转发重连）的回调返回 `false`，当场拒绝，不能返回 `true` 却不回答，否则登录一直等。
 - **算法按 OpenSSH 的默认来**：加了 `ecdh-sha2-nistp*`，素数组交换最小 2048 位，因为用户的堡垒机是老 Java 上的 Apache SSHD。没有加 SHA-1、CBC 这些 OpenSSH 默认也不开的算法。
 - **区分断网和要人处理**：`is_network_error`，它要显式认 `russh::Error::IO`。只有网络类错误才自动重连。agent 的错误只格式化进文字，不挂进错误链。
 - **跳板。** 每台跳板开好通道就丢掉自己的 `Handle`，整条链靠下一跳攥着的通道流活着：最终连接一断，链依次关闭。问答写明是哪台跳板；跳板和代理的失败包一层 `RouteFailure`。

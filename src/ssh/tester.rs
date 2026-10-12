@@ -122,9 +122,11 @@ impl SshConnectionTester {
                     });
                     true
                 }
+                // Declined at once, which fails the test and says why:
+                // replacing the saved key is left to a real connection.
                 ConnectionPromptKind::HostKeyChanged(_) => {
                     lock(&host_trust).key_changed = true;
-                    true
+                    false
                 }
                 // Credential questions never get here: the broker is
                 // non-interactive and fails with a `MissingCredential`.

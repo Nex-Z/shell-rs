@@ -742,6 +742,46 @@ fn a_forward_gives_up_once_its_reconnect_attempts_run_out() {
 }
 
 #[test]
+fn automatic_reconnect_rejects_changed_trust_without_asking() {
+    runtime().block_on(async {
+        let Some(server) = server().await else { return };
+        let fixture = Fixture::new(server.port);
+        fixture.save_password();
+        let run = fixture.start_with(
+            ForwardKind::Local,
+            free_port(),
+            Some(1),
+            &[Duration::from_millis(20)],
+        );
+        run.listening().await;
+        let path = fixture._data.path().join("known_hosts");
+        let key = russh::keys::PrivateKey::random(
+            &mut russh::keys::key::safe_rng(),
+            russh::keys::Algorithm::Ed25519,
+        )
+        .unwrap();
+        std::fs::write(&path, "").unwrap();
+        russh::keys::known_hosts::learn_known_hosts_path(
+            "127.0.0.1",
+            server.port,
+            key.public_key(),
+            &path,
+        )
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        server.hang_up().await;
+        assert!(matches!(run.raw().await, ForwardEvent::Reconnecting { .. }));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(3), run.raw())
+                .await
+                .expect("background trust changes must fail promptly"),
+            ForwardEvent::Failed(_)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    });
+}
+
+#[test]
 fn logging_in_again_never_asks_for_a_password() {
     runtime().block_on(async {
         let Some(server) = server().await else { return };

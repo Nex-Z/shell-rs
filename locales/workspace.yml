@@ -128,11 +128,15 @@ workspace.host_key.changed_title:
   zh-CN: 服务器主机密钥已变更
   en: Server host key changed
 workspace.host_key.changed:
-  zh-CN: "主机：%{host}:%{port}\n算法：%{algorithm}\n已保存指纹：%{old}\n服务器当前指纹：%{fingerprint}\n\n连接已阻断。请核验服务器身份后手动处理：%{path}"
-  en: "Host: %{host}:%{port}\nAlgorithm: %{algorithm}\nSaved fingerprint: %{old}\nServer’s fingerprint now: %{fingerprint}\n\nThe connection was blocked. Verify the server’s identity, then sort it out by hand in %{path}"
+  zh-CN: "主机：%{host}:%{port}\n算法：%{algorithm}\n已保存指纹：%{old}\n服务器当前指纹：%{fingerprint}\n\n服务器重装过或换过密钥时，更新后即可连接。否则可能有人在冒充这台服务器，请先核实。"
+  en: "Host: %{host}:%{port}\nAlgorithm: %{algorithm}\nSaved fingerprint: %{old}\nServer’s fingerprint now: %{fingerprint}\n\nIf the server was reinstalled or its keys were replaced, update the saved key to connect. Otherwise someone may be posing as the server, so verify it first."
 workspace.host_key.changed_via_jump_host:
-  zh-CN: "跳板主机：%{jump_host}\n主机：%{host}:%{port}\n算法：%{algorithm}\n已保存指纹：%{old}\n服务器当前指纹：%{fingerprint}\n\n连接已阻断。请核验服务器身份后手动处理：%{path}"
-  en: "Jump host: %{jump_host}\nHost: %{host}:%{port}\nAlgorithm: %{algorithm}\nSaved fingerprint: %{old}\nServer’s fingerprint now: %{fingerprint}\n\nThe connection was blocked. Verify the server’s identity, then sort it out by hand in %{path}"
+  zh-CN: "跳板主机：%{jump_host}\n主机：%{host}:%{port}\n算法：%{algorithm}\n已保存指纹：%{old}\n服务器当前指纹：%{fingerprint}\n\n服务器重装过或换过密钥时，更新后即可连接。否则可能有人在冒充这台服务器，请先核实。"
+  en: "Jump host: %{jump_host}\nHost: %{host}:%{port}\nAlgorithm: %{algorithm}\nSaved fingerprint: %{old}\nServer’s fingerprint now: %{fingerprint}\n\nIf the server was reinstalled or its keys were replaced, update the saved key to connect. Otherwise someone may be posing as the server, so verify it first."
+# Replaces the saved keys of the host with the one it shows now.
+workspace.host_key.update:
+  zh-CN: 更新并连接
+  en: Update and connect
 workspace.auth.title:
   zh-CN: SSH 认证
   en: SSH authentication

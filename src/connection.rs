@@ -105,7 +105,6 @@ pub struct HostKeyChangedPrompt {
     algorithm: String,
     old_fingerprints: Vec<String>,
     fingerprint: String,
-    known_hosts_path: std::path::PathBuf,
     jump_host: Option<String>,
 }
 
@@ -128,9 +127,6 @@ impl HostKeyChangedPrompt {
     }
     pub fn fingerprint(&self) -> &str {
         &self.fingerprint
-    }
-    pub fn known_hosts_path(&self) -> &std::path::Path {
-        &self.known_hosts_path
     }
 }
 
@@ -175,7 +171,6 @@ impl ConnectionPromptKind {
         algorithm: impl Into<String>,
         old_fingerprints: Vec<String>,
         fingerprint: impl Into<String>,
-        known_hosts_path: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self::HostKeyChanged(HostKeyChangedPrompt {
             host: host.into(),
@@ -183,7 +178,6 @@ impl ConnectionPromptKind {
             algorithm: algorithm.into(),
             old_fingerprints,
             fingerprint: fingerprint.into(),
-            known_hosts_path: known_hosts_path.into(),
             jump_host: None,
         })
     }

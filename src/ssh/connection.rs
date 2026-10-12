@@ -604,11 +604,6 @@ impl SshPrompts {
         self.ask(kind).await
     }
 
-    fn emit(&self, kind: ConnectionPromptKind) {
-        let request_id = NEXT_PROMPT_ID.fetch_add(1, Ordering::Relaxed);
-        (self.events)(ConnectionPrompt::new(request_id, kind));
-    }
-
     pub fn respond(&self, request_id: u64, reply: ConnectionPromptReply) {
         if let Some(sender) = lock(&self.pending).remove(&request_id) {
             let _ = sender.send(reply);
@@ -716,51 +711,57 @@ impl client::Handler for SshClientHandler {
         if known.iter().any(|(_, saved)| saved == &key) {
             return Ok(true);
         }
-        if !known.is_empty() {
+        // A key never seen, or one other than the saved: a reinstalled
+        // server, or someone posing as it. The user decides, and saying yes
+        // to a changed key replaces the saved ones.
+        let question = if known.is_empty() {
+            ConnectionPromptKind::unknown_host(&self.host, self.port, algorithm, fingerprint)
+        } else {
             let old = known
                 .iter()
                 .map(|(_, saved)| saved.fingerprint(HashAlg::Sha256).to_string())
                 .collect();
-            self.broker.emit(
-                ConnectionPromptKind::host_key_changed(
-                    &self.host,
-                    self.port,
-                    algorithm,
-                    old,
-                    fingerprint,
-                    &self.known_hosts_path,
-                )
-                .at_jump_host(self.jump_host.as_deref()),
-            );
-            return Ok(false);
-        }
-
+            ConnectionPromptKind::host_key_changed(
+                &self.host,
+                self.port,
+                algorithm,
+                old,
+                fingerprint,
+            )
+        };
         let reply = self
             .broker
-            .ask(
-                ConnectionPromptKind::unknown_host(&self.host, self.port, algorithm, fingerprint)
-                    .at_jump_host(self.jump_host.as_deref()),
-            )
+            .ask(question.at_jump_host(self.jump_host.as_deref()))
             .await?;
         if !matches!(reply, ConnectionPromptReply::TrustAndSave) {
             return Ok(false);
         }
         let _guard = lock(&self.known_hosts_lock);
-        let known = read_known_keys(&self.host, self.port, &self.known_hosts_path)?;
-        if known.iter().any(|(_, saved)| saved == &key) {
+        let now = read_known_keys(&self.host, self.port, &self.known_hosts_path)?;
+        if now.iter().any(|(_, saved)| saved == &key) {
             return Ok(true);
         }
-        if !known.is_empty() {
+        // The answer was about the keys saved then; another connection
+        // may have saved one since.
+        if !now
+            .iter()
+            .map(|(_, saved)| saved)
+            .eq(known.iter().map(|(_, saved)| saved))
+        {
             bail!(t!("ssh.known_hosts.changed_while_saving"));
         }
-        learn_known_hosts_path(&self.host, self.port, &key, &self.known_hosts_path).map_err(
-            |_| {
-                anyhow!(t!(
-                    "ssh.known_hosts.write_failed",
-                    path = self.known_hosts_path.display()
-                ))
-            },
-        )?;
+        let write_failed = || {
+            anyhow!(t!(
+                "ssh.known_hosts.write_failed",
+                path = self.known_hosts_path.display()
+            ))
+        };
+        if !known.is_empty() {
+            forget_known_host(&self.host, self.port, &self.known_hosts_path)
+                .map_err(|_| write_failed())?;
+        }
+        learn_known_hosts_path(&self.host, self.port, &key, &self.known_hosts_path)
+            .map_err(|_| write_failed())?;
         Ok(true)
     }
 
@@ -839,6 +840,34 @@ pub fn is_network_error(error: &anyhow::Error) -> bool {
             )
         )
     })
+}
+
+/// Drop every key saved for `host` at `port`, as `ssh-keygen -R` does: a
+/// reinstalled server has new keys of every kind. A line naming it with a
+/// hashed host name, which only a hand could have written there, stays.
+fn forget_known_host(host: &str, port: u16, path: &Path) -> std::io::Result<()> {
+    let name = if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{host}]:{port}")
+    };
+    let contents = std::fs::read_to_string(path)?;
+    let kept: String = contents
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            line.starts_with('#')
+                || !line
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|hosts| hosts.split(',').any(|entry| entry == name))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    // In one step, so a crash halfway cannot lose the other hosts' keys.
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, kept)?;
+    std::fs::rename(&temporary, path)
 }
 
 fn read_known_keys(host: &str, port: u16, path: &Path) -> Result<Vec<(usize, PublicKey)>> {
@@ -1376,6 +1405,41 @@ mod tests {
         std::fs::write(&path, "this is not a key\n").unwrap();
         let error = read_known_keys("example.test", 22, &path).unwrap_err();
         assert!(error.to_string().contains("已损坏"));
+    }
+
+    #[test]
+    fn forgetting_a_host_drops_its_keys_and_keeps_the_rest() {
+        use super::forget_known_host;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        let key = "AAAAC3NzaC1lZDI1NTE5AAAAIKjlGLd6uUkTpO5kSb3hPwdVvVGrN1J0yW3sKa3BpB2c";
+        std::fs::write(
+            &path,
+            format!(
+                "# kept as it is\n\
+                 192.168.7.1 ssh-ed25519 {key}\n\
+                 [192.168.7.1]:2222 ssh-ed25519 {key}\n\
+                 192.168.7.10 ssh-ed25519 {key}\n\
+                 192.168.7.1 ssh-rsa {key}\n\
+                 alias,192.168.7.1 ssh-ed25519 {key}\n"
+            ),
+        )
+        .unwrap();
+        forget_known_host("192.168.7.1", 22, &path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!(
+                "# kept as it is\n\
+                 [192.168.7.1]:2222 ssh-ed25519 {key}\n\
+                 192.168.7.10 ssh-ed25519 {key}\n"
+            )
+        );
+        forget_known_host("192.168.7.1", 2222, &path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("# kept as it is\n192.168.7.10 ssh-ed25519 {key}\n")
+        );
     }
 
     #[test]

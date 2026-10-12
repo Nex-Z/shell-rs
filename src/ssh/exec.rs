@@ -119,7 +119,7 @@ async fn run(
             }
             ConnectionPromptKind::HostKeyChanged(_) => {
                 lock(&seen).changed = true;
-                true
+                false
             }
             ConnectionPromptKind::Authentication(_) => false,
         })

@@ -698,3 +698,52 @@ fn a_proxy_that_is_not_there_is_named() {
         ))
     );
 }
+
+#[test]
+fn a_changed_jump_host_key_names_the_hop_and_cancel_stops_the_route() {
+    let (Some(jump), Some(target)) = (
+        start_server(JUMP_USER, JUMP_PASSWORD),
+        start_server(TARGET_USER, TARGET_PASSWORD),
+    ) else {
+        return;
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("known_hosts");
+    let stale = russh::keys::PrivateKey::random(
+        &mut russh::keys::key::safe_rng(),
+        russh::keys::Algorithm::Ed25519,
+    )
+    .unwrap();
+    russh::keys::known_hosts::learn_known_hosts_path(
+        "127.0.0.1",
+        jump.port,
+        stale.public_key(),
+        &path,
+    )
+    .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let connector = SshConnector::new(&path, Arc::new(InMemorySecretStore::default()));
+    let login = manual("127.0.0.1", target.port, TARGET_USER)
+        .with_route(LoginRoute::Jump(vec![hop("fixture-jump", jump.port)]));
+    let (broker, asked, _shutdown) = answering_broker();
+    runtime().block_on(async {
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                connector.connect(&SshConnectionConfig::from(&login), broker)
+            )
+            .await
+            .expect("declining a jump host must finish promptly")
+            .is_err()
+        );
+    });
+    let prompts = asked.lock().unwrap();
+    assert_eq!(prompts.len(), 1);
+    let ConnectionPromptKind::HostKeyChanged(question) = &prompts[0] else {
+        panic!("expected changed jump-host key");
+    };
+    assert_eq!(question.jump_host(), Some("fixture-jump"));
+    assert_eq!(question.port(), jump.port);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(jump.targets().is_empty());
+}

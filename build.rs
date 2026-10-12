@@ -14,7 +14,9 @@ fn main() {
         resource
             .set_icon("assets/logo/shellrs.ico")
             .set("ProductName", "ShellRS")
-            .set("FileDescription", "ShellRS");
+            .set("FileDescription", "ShellRS")
+            // Bastion launchers identify Xshell and WinSCP through this resource.
+            .set("OriginalFilename", "ShellRS-Xshell-WinSCP.exe");
         if let Err(error) = resource.compile() {
             panic!("cannot embed the icon: {error}");
         }

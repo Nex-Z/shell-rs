@@ -4,7 +4,22 @@
 
 ## Upstream relationship
 
-At creation, upstream `since2006/shell-rs:main` was `0dfa3fdf77388aae1e82147c040058f09c9d032f`. The source preview commit was 10 commits ahead and 5 behind that main. This maintenance commit does not merge those 5 upstream commits. In particular, the latest upstream host-key update flow and Windows Xshell/WinSCP compatibility changes are not included merely by creating this branch.
+The initial maintenance snapshot was `58b72ff172d6e62e2f09fbae56e466fed19c2757`. The source preview commit was 10 commits ahead and 5 behind upstream `since2006/shell-rs:main` at `0dfa3fdf77388aae1e82147c040058f09c9d032f`.
+
+The subsequent selective sync imports:
+
+- `e3397dabc792684ac4f20ce3c14dc624c09a9e80`: changed SSH host-key warning, old/new fingerprints, explicit update or cancel, non-interactive refusal, and concurrent trust-update checks.
+- The final Windows resource effect of `959e0b1d9de8ac2519008fcc9ca9a2f69b2b5664` and `ff1efaf15172b31485275fd3e17167740cb2b724`: `OriginalFilename=ShellRS-Xshell-WinSCP.exe`.
+
+This is a selective source sync, not an ancestry merge. Git can still report all five upstream commits as not merged. The two release/version-only commits `bd7b8c1` and `0dfa3fd` are intentionally excluded. `0.1.10-preview.2`, preview data/credential/known_hosts isolation, disabled preview updater, packaging, and workflows are retained.
+
+### Sync validation
+
+On Windows x64 with Rust 1.98.1 MSVC and the `preview` feature, formatting and Clippy (`--all-targets -- -D warnings`) passed. Targeted tests passed: SSH 75, CLI 61, forwarding 46, data paths 2, updater 53, terminal engine 36, connection UI 19, file-sidebar UI 22, CLI binary integration 4 (318 total).
+
+Added local-fixture regressions cover a concurrent known_hosts update, closing a terminal with a pending trust question, changed-key refusal without hanging in CLI and automatic forward reconnect, changed-key jump-host identification/cancellation, and UI Cancel/Escape. Existing tests cover accepting/rejecting a changed key and replacing an existing temporary known_hosts file on Windows. The normal production path remains `app::data_dir()/known_hosts`; preview data selection and credential namespaces are unchanged.
+
+The test-built Windows executable reports `ShellRS-Xshell-WinSCP.exe` and version `0.1.10-preview.2`. No installer or release package was rebuilt, no real remote endpoint was used, and no real trust file was changed. These are targeted Windows results, not a full cross-platform pass; Unix-only tests and real bastion-launcher acceptance remain unverified. CI status must be checked separately for the exact pushed commit.
 
 The branch combines the existing automatic host naming, file sidebar, GPU monitoring, connection status/Enter reconnect, terminal compose pane, and optional Bash directory following. It also records the path-input blur fix, focus-independent reconnect routing, Bash setting help text, and their regression tests.
 

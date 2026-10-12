@@ -891,7 +891,6 @@ impl Workspace {
             }
             ConnectionPromptKind::HostKeyChanged(prompt) => {
                 let old = prompt.old_fingerprints().join(&t!("common.list.separator"));
-                let path = prompt.known_hosts_path().display().to_string();
                 let description = introduced(
                     match prompt.jump_host() {
                         Some(jump_host) => t!(
@@ -901,8 +900,7 @@ impl Workspace {
                             port = prompt.port(),
                             algorithm = prompt.algorithm(),
                             old = old,
-                            fingerprint = prompt.fingerprint(),
-                            path = path
+                            fingerprint = prompt.fingerprint()
                         ),
                         None => t!(
                             "workspace.host_key.changed",
@@ -910,22 +908,32 @@ impl Workspace {
                             port = prompt.port(),
                             algorithm = prompt.algorithm(),
                             old = old,
-                            fingerprint = prompt.fingerprint(),
-                            path = path
+                            fingerprint = prompt.fingerprint()
                         ),
                     }
                     .to_string(),
                 );
+                // Updating is the risky answer: it trusts a key that may be
+                // someone posing as the server.
                 window.open_alert_dialog(cx, move |alert, _, _| {
                     alert
                         .title(t!("workspace.host_key.changed_title"))
                         .description(description.clone())
                         .button_props(
                             DialogButtonProps::default()
-                                .ok_text(t!("common.close"))
-                                .ok_variant(ButtonVariant::Danger),
+                                .ok_text(t!("workspace.host_key.update"))
+                                .ok_variant(ButtonVariant::Danger)
+                                .cancel_text(t!("common.cancel")),
                         )
+                        .show_cancel(true)
                         .on_ok({
+                            let answer = answer.clone();
+                            move |_, _, cx| {
+                                answer(ConnectionPromptReply::TrustAndSave, cx);
+                                true
+                            }
+                        })
+                        .on_cancel({
                             let answer = answer.clone();
                             move |_, _, cx| {
                                 answer(ConnectionPromptReply::Cancel, cx);
