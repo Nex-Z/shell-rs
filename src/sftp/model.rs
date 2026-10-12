@@ -455,6 +455,11 @@ impl TransferProgress {
         self.current_total = total;
         self
     }
+    /// A transfer status or retry reason, for fakes and tests.
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
     /// How the batch's items ended so far.
     #[cfg(test)]
     pub fn with_details(mut self, details: Vec<TransferDetail>) -> Self {

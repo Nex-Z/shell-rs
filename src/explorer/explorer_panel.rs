@@ -12,7 +12,7 @@ use crate::{
         OpenExplorer, RenameExplorer,
     },
     connection::{ConnectionPrompt, ConnectionPromptReply, Latency},
-    host::{BookmarkSide, ConnectionState, HostId, HostStore},
+    host::{BookmarkSide, ConnectionState, HostId, HostLogin, HostStore},
     i18n::t,
     sftp::{
         DownloadRequest, RemotePath, SftpCommand, SftpEvent, SharedLocalDirectoryProvider,
@@ -22,15 +22,18 @@ use crate::{
     shared::{ClosableTabTitle, HostMark, LatencyLabel, RenamableTab, close_tab_items},
 };
 use gpui_kit::component::{
-    Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
-    button::Button,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
+    button::{Button, ButtonVariants as _},
     dialog::DialogButtonProps,
     dock::{BasePanel, Panel, PanelEvent, TabGroup},
+    h_flex,
     menu::PopupMenu,
     notification::Notification,
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
+    tooltip::Tooltip,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -56,6 +59,8 @@ pub struct ExplorerPanel {
     host_id: HostId,
     generation: u64,
     endpoint: String,
+    /// The immutable configuration used by this connection and its queue.
+    login: HostLogin,
     pub(super) store: Entity<HostStore>,
     local: Entity<FilePane>,
     pub(super) remote: Entity<FilePane>,
@@ -89,6 +94,9 @@ pub struct ExplorerPanel {
     /// A title the user gave this tab. Lives as long as the tab, like the
     /// rest of the layout.
     custom_title: Option<SharedString>,
+    /// Embedded in the right sidebar: remote list and a compact queue.
+    pub(super) sidebar: bool,
+    sidebar_detached: bool,
     /// The pane that held focus last, which takes it back on activation.
     last_remote: bool,
     /// Where the user put the divider between the panes, and the one above
@@ -187,10 +195,24 @@ impl ExplorerPanel {
         let local_focus = local.read(cx).focus_handle(cx);
         let remote_focus = remote.read(cx).focus_handle(cx);
         let problem_changed = |this: &mut Self, _, _: &FilePaneEvent, cx: &mut Context<Self>| {
-            cx.emit(ExplorerPanelEvent::StatusChanged(this.id))
+            cx.emit(ExplorerPanelEvent::StatusChanged(this.id));
+            if this.sidebar {
+                cx.notify();
+            }
         };
         let subscriptions = vec![
-            cx.observe(&store, |_, _, cx| cx.notify()),
+            cx.observe_in(&store, window, |this, _, window, cx| {
+                if this.sidebar_configuration_changed(cx)
+                    && this
+                        .remote
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                {
+                    window.focus(&this.focus_handle, cx);
+                }
+                cx.notify();
+            }),
             cx.subscribe(&local, problem_changed),
             cx.subscribe(&remote, problem_changed),
             // Focus listeners run inside a draw, where a view's `notify` is
@@ -212,6 +234,7 @@ impl ExplorerPanel {
             host_id,
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             endpoint,
+            login,
             store,
             local,
             remote,
@@ -232,6 +255,8 @@ impl ExplorerPanel {
             focus_handle: cx.focus_handle(),
             tab_group: None,
             custom_title: None,
+            sidebar: false,
+            sidebar_detached: false,
             last_remote: true,
             panes_split: cx.new(|_| ResizableState::default()),
             queue_split: cx.new(|_| ResizableState::default()),
@@ -239,6 +264,33 @@ impl ExplorerPanel {
             _events: events_task,
         }
     }
+    /// Use the existing connection, commands and queue in a remote-only view.
+    pub fn show_in_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar = true;
+        self.remote.update(cx, |pane, cx| pane.make_compact(cx));
+        cx.notify();
+    }
+
+    pub fn detach_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_detached = true;
+        cx.notify();
+    }
+
+    fn sidebar_configuration_changed(&self, cx: &App) -> bool {
+        self.sidebar && self.store.read(cx).login(self.host_id).as_ref() != Some(&self.login)
+    }
+
+    /// Work which keeps an unshown temporary host alive until its result
+    /// is handled. Open editors are tracked by the workspace separately.
+    pub fn has_pending_work(&self) -> bool {
+        self.is_transferring()
+            || self.engine_busy
+            || self.dialog_open
+            || !self.files.is_empty()
+            || !self.opening.is_empty()
+            || !self.operations.is_empty()
+    }
+
     pub fn id(&self) -> ExplorerId {
         self.id
     }
@@ -596,6 +648,34 @@ impl ExplorerPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A sidebar must not silently keep acting on an old endpoint after
+        // its host's settings (and terminal) change. Already confirmed jobs
+        // and queue control retain the old connection, as do open editors.
+        if self.sidebar_configuration_changed(cx)
+            && !matches!(
+                command,
+                ExplorerCommand::Enqueue(_)
+                    | ExplorerCommand::Operate { .. }
+                    | ExplorerCommand::Answer { .. }
+                    | ExplorerCommand::ResumeTransfer
+                    | ExplorerCommand::CancelTransfer
+                    | ExplorerCommand::DiscardTransfer
+                    | ExplorerCommand::SelectQueueEntry { .. }
+                    | ExplorerCommand::ToggleQueueEntry { .. }
+                    | ExplorerCommand::RemoveQueueEntry
+                    | ExplorerCommand::ClearFinishedTransfers
+                    | ExplorerCommand::CloseConfirmed
+            )
+        {
+            window.push_notification(
+                Notification::warning(t!(
+                    "tools.files.configuration_changed",
+                    endpoint = self.endpoint.clone()
+                )),
+                cx,
+            );
+            return;
+        }
         // Disconnected, a command for the remote side says why nothing
         // happens and offers to reconnect, rather than doing nothing.
         if self.state == ConnectionState::Disconnected && needs_connection(command) {
@@ -718,7 +798,9 @@ impl ExplorerPanel {
                 }
             }
             ExplorerCommand::FocusPane { remote } => {
-                let focus = self.pane(*remote).read(cx).focus_handle(cx);
+                // Tab switches sides in Commander; the sidebar has no local
+                // list to receive the keyboard. Keep its visible list focused.
+                let focus = self.pane(self.sidebar || *remote).read(cx).focus_handle(cx);
                 window.focus(&focus, cx);
             }
             ExplorerCommand::MoveCursor {
@@ -1100,8 +1182,131 @@ impl TabMenu {
         )
     }
 }
+impl ExplorerPanel {
+    fn render_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let sid = self.id;
+        let sender = self.sender();
+        let changed = self.sidebar_configuration_changed(cx);
+        let dispatch = self.dispatch.clone();
+        let problem = self.remote.read(cx).problem().map(SharedString::from);
+        let status = problem.clone().unwrap_or_else(|| match self.state {
+            ConnectionState::Connected => t!("tools.files.connected"),
+            ConnectionState::Connecting => t!("tools.files.connecting"),
+            ConnectionState::Disconnected => t!("tools.files.disconnected"),
+        });
+        v_flex()
+            .id(("file-sidebar", sid.0))
+            .test_support()
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .min_w_0()
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("file-sidebar-status")
+                            .test_support()
+                            .aria_label(status.clone())
+                            .tooltip({
+                                let status = status.clone();
+                                move |window, cx| Tooltip::new(status.clone()).build(window, cx)
+                            })
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(if problem.is_some() {
+                                cx.theme().danger
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(status),
+                    )
+                    .when(
+                        !changed && self.state == ConnectionState::Disconnected,
+                        |row| {
+                            row.child(
+                                Button::new("file-sidebar-reconnect")
+                                    .ghost()
+                                    .small()
+                                    .icon(Icon::new(CatalogIcon::RefreshCw))
+                                    .label(t!("explorer.connection.reconnect"))
+                                    .disabled(!self.can_reconnect())
+                                    .on_click(move |_, window, cx| {
+                                        sender.send(ExplorerCommand::Reconnect, window, cx)
+                                    }),
+                            )
+                        },
+                    ),
+            )
+            .child(
+                div().flex_1().min_h_0().child(
+                    v_resizable(("explorer-queue", sid.0))
+                        .with_state(&self.queue_split)
+                        .child(resizable_panel().child(if changed {
+                            v_flex()
+                                .id("file-sidebar-config-changed")
+                                .test_support()
+                                .aria_label(t!(
+                                    "tools.files.configuration_changed",
+                                    endpoint = self.endpoint.clone()
+                                ))
+                                .p_3()
+                                .gap_3()
+                                .min_w_0()
+                                .child(t!(
+                                    "tools.files.configuration_changed",
+                                    endpoint = self.endpoint.clone()
+                                ))
+                                .child(
+                                    Button::new("file-sidebar-reopen")
+                                        .label(if self.sidebar_detached {
+                                            t!("tools.files.close_tab")
+                                        } else {
+                                            t!("tools.files.reopen")
+                                        })
+                                        .on_click(move |_, window, cx| {
+                                            dispatch.dispatch_action(
+                                                &CloseExplorer(sid),
+                                                window,
+                                                cx,
+                                            )
+                                        }),
+                                )
+                                .into_any_element()
+                        } else {
+                            self.remote.clone().into_any_element()
+                        }))
+                        .child(
+                            resizable_panel()
+                                .size(px(180.))
+                                .size_range(px(96.)..px(480.))
+                                .visible(!self.queue.is_empty())
+                                .child(self.render_queue(cx)),
+                        ),
+                ),
+            )
+            .when(!changed, |sidebar| {
+                sidebar.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t!("tools.files.drop_hint")),
+                )
+            })
+    }
+}
+
 impl Render for ExplorerPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.sidebar {
+            return self.render_sidebar(cx).into_any_element();
+        }
         let sid = self.id;
         // The queue always has its place, shown only with something in it,
         // so the panes keep their split when it comes and goes.
@@ -1145,6 +1350,7 @@ impl Render for ExplorerPanel {
                         ),
                 ),
             )
+            .into_any_element()
     }
 }
 

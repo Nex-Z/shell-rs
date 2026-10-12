@@ -3,7 +3,18 @@
 use std::path::{Path, PathBuf};
 
 /// Overrides the data directory. Set by tests and handy during development.
-const DATA_DIR_ENV: &str = "SHELLRS_DATA_DIR";
+pub const DATA_DIR_ENV: &str = if cfg!(feature = "preview") {
+    "SHELLRS_PREVIEW_DATA_DIR"
+} else {
+    "SHELLRS_DATA_DIR"
+};
+
+// The executable is safe to launch directly as well as through its launcher.
+const DATA_SUBDIRECTORY: &str = if cfg!(feature = "preview") {
+    "shellrs-preview"
+} else {
+    "shellrs"
+};
 
 /// The directory holding ShellRS's own files, e.g.
 /// `~/Library/Application Support/shellrs` on macOS. Falls back to the
@@ -13,8 +24,14 @@ pub fn data_dir() -> PathBuf {
         return PathBuf::from(dir);
     }
     dirs::data_dir()
-        .map(|dir| dir.join("shellrs"))
-        .unwrap_or_else(|| PathBuf::from("."))
+        .map(|dir| dir.join(DATA_SUBDIRECTORY))
+        .unwrap_or_else(|| {
+            PathBuf::from(if cfg!(feature = "preview") {
+                "shellrs-preview"
+            } else {
+                "."
+            })
+        })
 }
 
 /// The SQLite file holding hosts and groups. The parent directory is
@@ -39,7 +56,7 @@ pub fn updates_dir() -> PathBuf {
         return data_dir().join("updates");
     }
     dirs::cache_dir()
-        .map(|dir| dir.join("shellrs").join("updates"))
+        .map(|dir| dir.join(DATA_SUBDIRECTORY).join("updates"))
         .unwrap_or_else(|| data_dir().join("updates"))
 }
 
@@ -103,6 +120,24 @@ mod tests {
     use std::path::Path;
 
     use super::pipe_name;
+
+    #[test]
+    fn preview_and_normal_builds_keep_separate_data() {
+        #[cfg(feature = "preview")]
+        {
+            assert_eq!(super::DATA_SUBDIRECTORY, "shellrs-preview");
+            assert_eq!(super::DATA_DIR_ENV, "SHELLRS_PREVIEW_DATA_DIR");
+        }
+        #[cfg(not(feature = "preview"))]
+        {
+            assert_eq!(super::DATA_SUBDIRECTORY, "shellrs");
+            assert_eq!(super::DATA_DIR_ENV, "SHELLRS_DATA_DIR");
+        }
+        assert_ne!(
+            pipe_name(Path::new("/data/shellrs")),
+            pipe_name(Path::new("/data/shellrs-preview"))
+        );
+    }
 
     #[test]
     fn each_data_directory_gets_a_pipe_of_its_own() {

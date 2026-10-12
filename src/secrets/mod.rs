@@ -18,7 +18,11 @@ pub use memory::{InMemorySecretStore, NoSecretStore};
 pub use temporary::TemporarySecretStore;
 
 /// 钥匙串里的服务名，所有条目共用。改了会让已保存的秘密全部失联。
-pub const SERVICE: &str = "shellrs";
+pub const SERVICE: &str = if cfg!(feature = "preview") {
+    "shellrs-preview"
+} else {
+    "shellrs"
+};
 
 /// 一条秘密的身份。
 ///
@@ -124,6 +128,14 @@ pub fn system_secret_store() -> SharedSecretStore {
 #[cfg(test)]
 mod tests {
     use super::{InMemorySecretStore, NoSecretStore, SecretRef, SecretStore};
+
+    #[test]
+    fn preview_and_normal_builds_use_separate_credential_namespaces() {
+        #[cfg(feature = "preview")]
+        assert_eq!(super::SERVICE, "shellrs-preview");
+        #[cfg(not(feature = "preview"))]
+        assert_eq!(super::SERVICE, "shellrs");
+    }
 
     #[test]
     fn password_accounts_name_the_endpoint() {

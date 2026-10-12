@@ -104,14 +104,18 @@ impl CliBackend for FakeBackend {
 fn shellrs(data_dir: &Path, args: &[&str], stdin: &[u8]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_shellrs-cli"))
         .args(args)
-        .env("SHELLRS_DATA_DIR", data_dir)
+        // In preview builds this inherited normal-profile value must be ignored.
+        .env("SHELLRS_DATA_DIR", data_dir.join("unused-normal-profile"))
+        .env(shellrs::app::DATA_DIR_ENV, data_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     child.stdin.take().unwrap().write_all(stdin).unwrap();
-    child.wait_with_output().unwrap()
+    let output = child.wait_with_output().unwrap();
+    assert!(!data_dir.join("unused-normal-profile").exists());
+    output
 }
 
 #[test]
@@ -226,7 +230,9 @@ fn the_command_finds_the_app_through_its_data_directory() {
 fn open_shellrs(data_dir: &Path, args: &[&str]) -> Option<i32> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_shellrs"))
         .args(args)
-        .env("SHELLRS_DATA_DIR", data_dir)
+        // In preview builds this inherited normal-profile value must be ignored.
+        .env("SHELLRS_DATA_DIR", data_dir.join("unused-normal-profile"))
+        .env(shellrs::app::DATA_DIR_ENV, data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -235,6 +241,7 @@ fn open_shellrs(data_dir: &Path, args: &[&str]) -> Option<i32> {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
+            assert!(!data_dir.join("unused-normal-profile").exists());
             return status.code();
         }
         if Instant::now() > deadline {

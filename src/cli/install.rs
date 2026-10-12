@@ -114,6 +114,11 @@ impl IntegrationPaths {
     /// administrator; Linux gets `~/.local/bin`, which needs nobody.
     /// Windows gets a folder of ShellRS's own, added to the user's PATH.
     pub fn system() -> Option<Self> {
+        // A portable preview must not replace the installed CLI or agent skills,
+        // including the automatic refresh performed when the workspace opens.
+        if cfg!(feature = "preview") {
+            return None;
+        }
         let home = dirs::home_dir()?;
         let exe = program(
             std::env::current_exe().ok()?,
@@ -412,6 +417,12 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn previews_cannot_install_or_refresh_global_integrations() {
+        assert!(IntegrationPaths::system().is_none());
+    }
 
     #[test]
     fn inside_an_appimage_the_command_links_to_the_appimage() {

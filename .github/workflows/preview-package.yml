@@ -1,0 +1,273 @@
+# CI-only preview branch. Never publish a release or modify update feeds.
+name: preview-package
+'on':
+  push:
+    branches:
+    - preview/files-gpu-package
+permissions:
+  contents: read
+concurrency:
+  group: preview-package-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: '1'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+defaults:
+  run:
+    shell: bash
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Record source
+      run: 'mkdir -p validation-logs
+
+        { git rev-parse HEAD; git status --short; git diff --exit-code; } 2>&1 | tee validation-logs/source.log'
+    - name: Linux dependencies
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y cmake clang pkg-config libfontconfig-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev
+        libwayland-dev libx11-xcb-dev libxcb1-dev libvulkan-dev libdbus-1-dev libssl-dev fonts-dejavu-core openssh-sftp-server
+
+        test -x /usr/lib/openssh/sftp-server'
+    - name: Pinned Rust
+      run: 'rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+
+        rustc --version
+
+        cargo --version'
+    - name: Format
+      run: cargo fmt --check 2>&1 | tee validation-logs/format.log
+    - name: Default Clippy
+      run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee validation-logs/default-clippy.log
+    - name: Default tests
+      run: cargo test --locked --no-fail-fast 2>&1 | tee validation-logs/default-tests.log
+    - name: Preview Clippy
+      run: cargo clippy --locked --features preview --all-targets -- -D warnings 2>&1 | tee validation-logs/preview-clippy.log
+    - name: Preview tests with conflicting release channel
+      env:
+        SHELLRS_UPDATE_CHANNEL: stable
+      run: cargo test --locked --features preview --no-fail-fast 2>&1 | tee validation-logs/preview-tests.log
+    - name: Retain logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.job }}-logs-${{ github.sha }}
+        path: validation-logs/
+        retention-days: 7
+        if-no-files-found: warn
+  windows:
+    needs: linux
+    runs-on: windows-2025
+    timeout-minutes: 180
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Record source
+      run: 'mkdir -p validation-logs
+
+        { git rev-parse HEAD; git status --short; git diff --exit-code; } 2>&1 | tee validation-logs/source.log'
+    - name: Pinned Rust
+      run: 'rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+
+        rustc --version
+
+        cargo --version'
+    - uses: ilammy/setup-nasm@v1
+    - name: Windows default Clippy
+      run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee validation-logs/windows-default-clippy.log
+    - name: Windows default cli-
+      run: 'cargo test --locked  --lib cli:: 2>&1 | tee validation-logs/windows-default-cli-.log'
+    - name: Windows default update-
+      run: 'cargo test --locked  --lib update:: 2>&1 | tee validation-logs/windows-default-update-.log'
+    - name: Windows default sftp-tests-local_listing
+      run: cargo test --locked  --lib sftp::tests::local_listing 2>&1 | tee validation-logs/windows-default-sftp-tests-local_listing.log
+    - name: Windows default terminal-local_shell
+      run: cargo test --locked  --lib terminal::local_shell 2>&1 | tee validation-logs/windows-default-terminal-local_shell.log
+    - name: Windows default CLI binary
+      run: cargo test --locked  --test cli_bin 2>&1 | tee validation-logs/windows-default-cli-binary.log
+    - name: Windows preview cli-
+      run: 'cargo test --locked --features preview --lib cli:: 2>&1 | tee validation-logs/windows-preview-cli-.log'
+    - name: Windows preview update-
+      run: 'cargo test --locked --features preview --lib update:: 2>&1 | tee validation-logs/windows-preview-update-.log'
+    - name: Windows preview sftp-tests-local_listing
+      run: cargo test --locked --features preview --lib sftp::tests::local_listing 2>&1 | tee validation-logs/windows-preview-sftp-tests-local_listing.log
+    - name: Windows preview terminal-local_shell
+      run: cargo test --locked --features preview --lib terminal::local_shell 2>&1 | tee validation-logs/windows-preview-terminal-local_shell.log
+    - name: Windows preview CLI binary
+      run: cargo test --locked --features preview --test cli_bin 2>&1 | tee validation-logs/windows-preview-cli-binary.log
+    - name: Windows preview Clippy
+      run: cargo clippy --locked --features preview --all-targets -- -D warnings 2>&1 | tee validation-logs/windows-preview-clippy.log
+    - name: Preview isolation with conflicting release channel
+      env:
+        SHELLRS_UPDATE_CHANNEL: stable
+      run: 'cargo test --locked --features preview --lib preview 2>&1 | tee validation-logs/preview-isolation.log
+
+        cargo test --locked --features preview --test ui a_preview_cannot_enable_updates_through_settings_or_manual_actions
+        2>&1 | tee validation-logs/preview-updater.log'
+    - name: Build portable preview
+      env:
+        SHELLRS_COMMIT: ${{ github.sha }}
+      run: 'df -h .
+
+        export SHELLRS_BUILD_DATE=$(date -u +%Y-%m-%d)
+
+        unset SHELLRS_UPDATE_CHANNEL
+
+        cargo build --release --locked --features preview --bins 2>&1 | tee validation-logs/release-build.log'
+    - name: Package isolated portable executables
+      shell: pwsh
+      run: '$ErrorActionPreference = ''Stop''
+
+        $version = ''0.1.10-preview.1''
+
+        $actualVersion = & ./target/release/shellrs-cli.exe --version
+
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        if (($actualVersion -join "`n").Trim() -ne "shellrs $version") { throw "Unexpected CLI version: $actualVersion"
+        }
+
+        $folder = "ShellRS-$version-windows-x86_64-preview"
+
+        New-Item -ItemType Directory -Path "dist/$folder" -Force | Out-Null
+
+        Copy-Item target/release/shellrs.exe,target/release/shellrs-cli.exe "dist/$folder/"
+
+        Copy-Item packaging/preview/launch-preview.cmd,packaging/preview/README.zh-CN.txt,LICENSE "dist/$folder/"
+
+        "version=$version`ncommit=$env:GITHUB_SHA`nfeatures=preview`nupdates=disabled`nsigning=unsigned`nsource=https://github.com/$env:GITHUB_REPOSITORY/tree/$env:GITHUB_SHA"
+        | Set-Content "dist/$folder/BUILD-INFO.txt" -Encoding utf8
+
+        Get-ChildItem "dist/$folder" -File | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+        } | Set-Content "dist/$folder/SHA256SUMS" -Encoding ascii
+
+        Get-AuthenticodeSignature "dist/$folder/shellrs.exe" | Format-List Status,StatusMessage | Out-String | Set-Content
+        validation-logs/signature.log
+
+        Compress-Archive -Path "dist/$folder" -DestinationPath "dist/$folder.zip"
+
+        $zip = Get-Item "dist/$folder.zip"
+
+        if ($zip.Length -gt 200MB) { throw "Preview ZIP exceeds the 200 MiB artifact budget: $($zip.Length) bytes"
+        }
+
+        "$((Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower())  $($zip.Name)" | Set-Content "dist/$folder.zip.sha256"
+        -Encoding ascii
+
+        git archive --format=zip --output="dist/$folder-source.zip" HEAD
+
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        Get-ChildItem dist/*.zip | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+        } | Set-Content dist/SHA256SUMS -Encoding ascii
+
+        $total = (Get-ChildItem dist/*.zip | Measure-Object Length -Sum).Sum
+
+        if ($total -gt 200MB) { throw "Combined ZIPs exceed the 200 MiB artifact budget: $total bytes" }
+
+        "Binary ZIP bytes: $($zip.Length); all ZIP bytes: $total" | Tee-Object -FilePath validation-logs/package-size.log
+
+        '
+    - name: Build isolated preview installer
+      shell: pwsh
+      run: '$ErrorActionPreference = ''Stop''
+
+        $version = ''0.1.10-preview.1''
+
+        $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+
+        if (-not (Test-Path $iscc)) { throw ''The standard Windows runner is missing Inno Setup 6'' }
+
+        & $iscc "/DAppVersion=$version" "/DBuildDir=$env:GITHUB_WORKSPACE\target\release" "/O$env:GITHUB_WORKSPACE\dist"
+        packaging\preview\shellrs-preview.iss 2>&1 | Tee-Object -FilePath validation-logs/installer-build.log
+
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        $packages = Get-ChildItem dist -File | Where-Object { $_.Extension -in ''.zip'',''.exe'' }
+
+        $total = ($packages | Measure-Object Length -Sum).Sum
+
+        if ($total -gt 200MB) { throw "Packages exceed the 200 MiB artifact budget: $total bytes" }
+
+        $packages | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+        } | Set-Content dist/SHA256SUMS -Encoding ascii
+
+        Get-AuthenticodeSignature dist/*-preview-setup.exe | Format-List Status,StatusMessage | Out-String | Set-Content
+        validation-logs/installer-signature.log
+
+        '
+    - name: Smoke test installer on the disposable runner
+      shell: pwsh
+      run: "$ErrorActionPreference = 'Stop'\n$pathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')\n\
+        $setup = (Get-Item 'dist/*-preview-setup.exe').FullName\n$installDir = Join-Path $env:LOCALAPPDATA 'Programs/ShellRS\
+        \ Preview'\nif (Test-Path $installDir) { throw 'Unexpected existing preview installation on the disposable\
+        \ runner' }\n$normalData = Join-Path $env:APPDATA 'shellrs'\n$previewData = Join-Path $env:APPDATA 'shellrs-preview'\n\
+        $normalInstall = Join-Path $env:LOCALAPPDATA 'Programs/ShellRS'\n$markerDirs = @($normalData, $previewData,\
+        \ $normalInstall)\nforeach ($dir in $markerDirs) {\n    New-Item -ItemType Directory -Path $dir -Force |\
+        \ Out-Null\n    $marker = Join-Path $dir 'preview-installer-smoke-sentinel.txt'\n    if (Test-Path $marker)\
+        \ { throw \"Unexpected pre-existing sentinel: $marker\" }\n    Set-Content $marker 'retain-this-test-fixture'\
+        \ -Encoding ascii\n}\n$officialExe = Join-Path $normalInstall 'shellrs.exe'\nif (Test-Path $officialExe)\
+        \ { throw 'Unexpected existing official executable on the disposable runner' }\nSet-Content $officialExe\
+        \ 'official-executable-sentinel' -Encoding ascii\n$rejectionLog = Join-Path $env:GITHUB_WORKSPACE 'validation-logs/installer-rejected-official-dir.log'\n\
+        $rejected = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',(\"\
+        /DIR=`\"$normalInstall`\"\"),(\"/LOG=`\"$rejectionLog`\"\") -Wait -PassThru\nif ($rejected.ExitCode -eq\
+        \ 0) { throw 'Installer accepted the official install directory' }\nif ((Get-Content $officialExe -Raw).Trim()\
+        \ -ne 'official-executable-sentinel') { throw 'Installer altered the official executable fixture' }\nif\
+        \ (Test-Path $installDir) { throw 'Rejected installation still created its application directory' }\n$installLog\
+        \ = Join-Path $env:GITHUB_WORKSPACE 'validation-logs/installer-smoke-install.log'\n$process = Start-Process\
+        \ -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',(\"/LOG=`\"$installLog`\"\
+        \") -Wait -PassThru\nif ($process.ExitCode -ne 0) { throw \"Preview setup exited $($process.ExitCode)\"\
+        \ }\nforeach ($file in @('shellrs.exe','shellrs-cli.exe','LICENSE','README.zh-CN.txt')) {\n    if (-not\
+        \ (Test-Path (Join-Path $installDir $file))) { throw \"Missing installed file: $file\" }\n}\n$shortcut =\
+        \ Join-Path ([Environment]::GetFolderPath('Programs')) 'ShellRS Preview.lnk'\nif (-not (Test-Path $shortcut))\
+        \ { throw 'Missing dedicated preview Start menu shortcut' }\n$registration = 'Software\\Microsoft\\Windows\\\
+        CurrentVersion\\Uninstall\\{8D847C27-FE52-49DD-ACE6-E539F0E064CB}_is1'\nif (-not (Test-Path \"HKCU:\\$registration\"\
+        )) { throw 'Missing current-user preview uninstall entry' }\nif (Test-Path \"HKLM:\\$registration\") { throw\
+        \ 'Preview unexpectedly registered a machine-wide installation' }\n$untracked = Join-Path $installDir 'user-preview-untracked.txt'\n\
+        Set-Content $untracked 'keep-untracked-preview-file' -Encoding ascii\n$installedVersion = & (Join-Path $installDir\
+        \ 'shellrs-cli.exe') --version\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nif (($installedVersion\
+        \ -join \"`n\").Trim() -ne 'shellrs 0.1.10-preview.1') { throw 'Installed CLI version mismatch' }\n$uninstallLog\
+        \ = Join-Path $env:GITHUB_WORKSPACE 'validation-logs/installer-smoke-uninstall.log'\n$uninstaller = Join-Path\
+        \ $installDir 'unins000.exe'\n$process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',(\"\
+        /LOG=`\"$uninstallLog`\"\") -Wait -PassThru\nif ($process.ExitCode -ne 0) { throw \"Preview uninstall exited\
+        \ $($process.ExitCode)\" }\nif (Test-Path (Join-Path $installDir 'shellrs.exe')) { throw 'Preview executable\
+        \ remains after uninstall' }\nif (Test-Path $shortcut) { throw 'Preview shortcut remains after uninstall'\
+        \ }\nif (Test-Path \"HKCU:\\$registration\") { throw 'Preview uninstall entry remains' }\nif ((Get-Content\
+        \ $untracked -Raw).Trim() -ne 'keep-untracked-preview-file') { throw 'Uninstall deleted an untracked user\
+        \ file' }\nforeach ($dir in $markerDirs) {\n    $marker = Join-Path $dir 'preview-installer-smoke-sentinel.txt'\n\
+        \    if ((Get-Content $marker -Raw).Trim() -ne 'retain-this-test-fixture') { throw \"Data sentinel changed:\
+        \ $marker\" }\n}\nif ((Get-Content $officialExe -Raw).Trim() -ne 'official-executable-sentinel') { throw\
+        \ 'Official executable fixture changed' }\nif ([Environment]::GetEnvironmentVariable('Path', 'User') -ne\
+        \ $pathBefore) { throw 'Installer changed the user PATH' }\n'Preview install/uninstall passed; official\
+        \ fixtures and preview data retained; user PATH unchanged.'\n"
+    - name: Upload verified preview package
+      uses: actions/upload-artifact@v4
+      with:
+        name: ShellRS-0.1.10-preview.1-windows-x86_64-${{ github.sha }}
+        path: 'dist/*.zip
+
+          dist/*.zip.sha256
+
+          dist/*-preview-setup.exe
+
+          dist/SHA256SUMS'
+        retention-days: 7
+        if-no-files-found: error
+        compression-level: 0
+    - name: Retain logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.job }}-logs-${{ github.sha }}
+        path: validation-logs/
+        retention-days: 7
+        if-no-files-found: warn

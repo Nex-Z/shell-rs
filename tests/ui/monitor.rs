@@ -170,7 +170,11 @@ async fn the_monitor_shows_the_hosts_cpu_memory_network_and_disks(cx: &mut TestA
 
     // The first reading asked for everything; the next one for the load
     // only, which starts no process on the host but its `sh`.
-    let commands = factory.exec_commands();
+    let commands: Vec<_> = factory
+        .exec_commands()
+        .into_iter()
+        .filter(|command| !command.contains("@@shellrs-gpu-v1"))
+        .collect();
     assert!(commands[0].contains("@@host") && commands[0].contains("@@df"));
     assert!(!commands[1].contains("@@host") && !commands[1].contains("@@df"));
 }
@@ -389,5 +393,95 @@ async fn sixty_four_cores_show_one_row_until_unfolded(cx: &mut TestAppContext) {
     in_frame(cx, handle, |window, _| {
         let column_right = window.find("monitor-cpu-usage").bounds().right();
         assert!(all.iter().all(|bar| bar.right() <= column_right));
+    });
+}
+
+const GPUS: &str = "@@shellrs-gpu-v1\n@@nvidia-begin\n00000000:01:00.0, NVIDIA Test GPU, 42, 2048, 8192, 61, 125.5\n00000000:02:00.0, NVIDIA Unknown Metrics, N/A, N/A, N/A, N/A, N/A\n@@nvidia-status=0\n@@sysfs-begin\n@@sysfs-status=ok\n@@shellrs-gpu-end\n";
+
+#[gpui_kit::test]
+async fn gpu_cards_show_each_device_with_meters_and_unknowns(cx: &mut TestAppContext) {
+    let factory = Arc::new(FakeTerminalFactory::answering(&[FIRST, SECOND]));
+    factory.gpu_outputs.lock().unwrap().push_back(GPUS.into());
+    let handle = open_monitor(cx, factory);
+    wait_for_label(cx, handle, "monitor-gpu:0000:01:00.0:usage", "42.0%").await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window.find("monitor-gpu:0000:01:00.0:memory").label(),
+            Some("25.0%")
+        );
+        assert_eq!(
+            window.find("monitor-gpu:0000:02:00.0:usage").label(),
+            Some("—")
+        );
+        assert_eq!(
+            window.find("monitor-gpu:0000:02:00.0:memory").label(),
+            Some("—")
+        );
+        assert_eq!(
+            window.find("monitor-gpu:0000:02:00.0:amount").label(),
+            Some("—")
+        );
+        assert!(window.try_find("monitor-gpu-error").is_none());
+        assert!(
+            window
+                .find("monitor-gpu:0000:01:00.0:usage")
+                .bounds()
+                .size
+                .width
+                > px(0.)
+        );
+    });
+}
+
+#[gpui_kit::test]
+async fn no_gpu_adds_no_cards_and_gpu_sampling_stops_with_the_panel(cx: &mut TestAppContext) {
+    let factory = Arc::new(FakeTerminalFactory::answering(&[FIRST]));
+    let handle = open_monitor(cx, factory.clone());
+    cx.wait_for(handle.into(), Duration::from_secs(5), |_, _| {
+        factory
+            .exec_commands()
+            .iter()
+            .any(|command| command.contains("@@shellrs-gpu-v1"))
+    })
+    .await;
+    // The empty GPU answer has its own 30-second cadence, not the CPU cadence.
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+    assert_eq!(
+        factory
+            .exec_commands()
+            .iter()
+            .filter(|command| command.contains("@@shellrs-gpu-v1"))
+            .count(),
+        1
+    );
+    in_frame(cx, handle, |window, cx| {
+        assert!(window.try_find("monitor-gpu-error").is_none());
+        assert!(window.try_find("monitor-gpu:0000:01:00.0:usage").is_none());
+        window.click("tool-monitor", cx);
+    });
+    let before = factory.exec_count();
+    cx.executor().advance_clock(Duration::from_secs(40));
+    cx.run_until_parked();
+    assert_eq!(factory.exec_count(), before);
+}
+
+#[gpui_kit::test]
+async fn a_broken_gpu_reading_does_not_hide_other_system_metrics(cx: &mut TestAppContext) {
+    let factory = Arc::new(FakeTerminalFactory::answering(&[FIRST, SECOND]));
+    factory
+        .gpu_outputs
+        .lock()
+        .unwrap()
+        .push_back("truncated output".into());
+    let handle = open_monitor(cx, factory);
+    cx.wait_for(handle.into(), Duration::from_secs(5), |window, _| {
+        window.try_find("monitor-gpu-error").is_some()
+    })
+    .await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(window.find("monitor-host").label(), Some("web-01-vm"));
+        assert!(window.try_find("monitor-memory-usage").is_some());
+        assert!(window.try_find("monitor-gpu:0000:01:00.0:usage").is_none());
     });
 }

@@ -32,9 +32,14 @@ pub type ExecResult = Result<String, String>;
 /// Answered once on `reply` with the command's standard output, or with
 /// why it could not run. A transport without a connection (a local PTY)
 /// drops the request, which the asker sees as the reply channel closing.
+#[non_exhaustive]
 pub struct ExecRequest {
     pub command: String,
     pub reply: mpsc::Sender<ExecResult>,
+    /// Tighter bounds for optional telemetry; ordinary commands use the transport defaults.
+    pub(crate) limits: Option<(std::time::Duration, usize)>,
+    /// Cancelled telemetry must not run after its panel was hidden.
+    pub(crate) cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for TerminalTransportCommand {

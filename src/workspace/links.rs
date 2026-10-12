@@ -50,7 +50,32 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.store.read(cx).is_temporary(host) || self.has_tabs(host, cx) {
+        if !self.store.read(cx).is_temporary(host) {
+            return;
+        }
+        // An idle hidden sidebar is not a reason to keep a temporary host's
+        // credentials alive. Transfers and editors, however, still need it.
+        if self.terminals_of(host, cx).next().is_none()
+            && let Some(panel) = self.file_sidebar(host).cloned()
+        {
+            let id = panel.read(cx).id();
+            let standalone = self
+                .explorers_of(host, cx)
+                .iter()
+                .any(|other| other.read(cx).id() != id);
+            if panel.read(cx).is_transferring() {
+                // A temporary host has no hosts/recent entry from which to
+                // reopen a stopped queue. Keep running queues reachable too:
+                // they can stop later on a connection error.
+                self.detach_file_sidebar(host, window, cx);
+            } else if !standalone
+                && !panel.read(cx).has_pending_work()
+                && self.editors_of(id, cx).is_empty()
+            {
+                self.remove_explorer(id, window, cx);
+            }
+        }
+        if self.has_tabs(host, cx) {
             return;
         }
         self.cancel_prompts_for_host(host, window, cx);

@@ -62,7 +62,7 @@ fn main() {
         cx.spawn(async move |cx| {
             cx.open_window(options, |window, cx| {
                 window.activate_window();
-                window.set_window_title("ShellRS");
+                window.set_window_title(&shellrs::update::build_info::app_title());
                 shellrs::app::hide_when_closed(window, cx);
                 let (store, problem) = open_store();
                 let store = cx.new(|_| store);

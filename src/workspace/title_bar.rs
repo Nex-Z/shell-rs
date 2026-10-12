@@ -51,7 +51,7 @@ pub fn render_title_bar(
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
-                        .child("ShellRS"),
+                        .child(crate::update::build_info::app_title()),
                 )
                 .child(
                     // Which list the sidebar shows. The choice stays marked

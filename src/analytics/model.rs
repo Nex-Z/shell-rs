@@ -66,6 +66,7 @@ pub enum Counter {
     /// A tool of the right sidebar opened.
     ToolSnippets,
     ToolHistory,
+    ToolFiles,
     ToolDocker,
     ToolServices,
     ToolProcesses,
@@ -96,7 +97,7 @@ pub enum Counter {
 }
 
 impl Counter {
-    pub const ALL: [Counter; 44] = [
+    pub const ALL: [Counter; 45] = [
         Self::Ssh,
         Self::SshJump,
         Self::SshProxy,
@@ -119,6 +120,7 @@ impl Counter {
         Self::PreviewMarkdown,
         Self::ToolSnippets,
         Self::ToolHistory,
+        Self::ToolFiles,
         Self::ToolDocker,
         Self::ToolServices,
         Self::ToolProcesses,
@@ -167,6 +169,7 @@ impl Counter {
             Self::PreviewMarkdown => "preview_markdown",
             Self::ToolSnippets => "tool_snippets",
             Self::ToolHistory => "tool_history",
+            Self::ToolFiles => "tool_files",
             Self::ToolDocker => "tool_docker",
             Self::ToolServices => "tool_services",
             Self::ToolProcesses => "tool_processes",

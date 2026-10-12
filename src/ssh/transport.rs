@@ -333,12 +333,44 @@ fn pixel_dimension(cells: usize, cell_size: u16) -> u32 {
 /// Run one command beside the shell and answer its request: what it printed
 /// on standard output, or why it did not run. Its standard error is dropped.
 async fn run_exec(handle: &SshHandle, request: ExecRequest) {
-    let ExecRequest { command, reply } = request;
-    let result = tokio::time::timeout(EXEC_TIMEOUT, async {
-        let mut channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|_| t!("ssh.exec.channel_failed").to_string())?;
+    let ExecRequest {
+        command,
+        reply,
+        limits,
+        cancelled,
+    } = request;
+    if cancelled
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::Acquire))
+    {
+        let _ = reply.send(Err(t!("ssh.exec.cancelled").to_string()));
+        return;
+    }
+    let (timeout, output_limit) = limits.unwrap_or((EXEC_TIMEOUT, EXEC_OUTPUT_LIMIT));
+    let timeout = timeout.min(EXEC_TIMEOUT);
+    let output_limit = output_limit.min(EXEC_OUTPUT_LIMIT);
+    let deadline = tokio::time::Instant::now() + timeout;
+    // Do not cancel while russh awaits the channel-open acknowledgement:
+    // dropping that future loses the handle without closing the remote channel.
+    // Once it opens, a cancelled request is closed without executing anything.
+    let mut channel = match tokio::time::timeout_at(deadline, handle.channel_open_session()).await {
+        Ok(Ok(channel)) => channel,
+        Ok(Err(_)) => {
+            let _ = reply.send(Err(t!("ssh.exec.channel_failed").to_string()));
+            return;
+        }
+        Err(_) => {
+            let _ = reply.send(Err(t!("ssh.exec.timeout").to_string()));
+            return;
+        }
+    };
+    let running = tokio::time::timeout_at(deadline, async {
+        if cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
+            return Err(t!("ssh.exec.cancelled").to_string());
+        }
         channel
             .exec(true, command)
             .await
@@ -347,8 +379,7 @@ async fn run_exec(handle: &SshHandle, request: ExecRequest) {
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
-                    let room = EXEC_OUTPUT_LIMIT.saturating_sub(output.len());
-                    output.extend_from_slice(&data[..data.len().min(room)]);
+                    append_exec_output(&mut output, &data, output_limit, limits.is_some())?;
                 }
                 Some(ChannelMsg::Failure) => return Err(t!("ssh.exec.refused").to_string()),
                 Some(ChannelMsg::Eof | ChannelMsg::Close) | None => break,
@@ -356,11 +387,48 @@ async fn run_exec(handle: &SshHandle, request: ExecRequest) {
             }
         }
         Ok(String::from_utf8_lossy(&output).into_owned())
-    })
-    .await
-    .unwrap_or_else(|_| Err(t!("ssh.exec.timeout").to_string()));
+    });
+    let result = tokio::select! {
+        result = running => result.unwrap_or_else(|_| Err(t!("ssh.exec.timeout").to_string())),
+        () = exec_cancelled(cancelled.clone()) => Err(t!("ssh.exec.cancelled").to_string()),
+    };
+    if limits.is_some() && result.is_err() {
+        // Best effort only: a server can ignore TERM. The monitor does not
+        // retry a failed transport query on this connection.
+        let _ = tokio::time::timeout(Duration::from_millis(200), async {
+            let _ = channel.signal(russh::Sig::TERM).await;
+            let _ = channel.close().await;
+        })
+        .await;
+    }
     // The asker may have stopped waiting.
     let _ = reply.send(result);
+}
+
+/// Cancellation does not require waking GPUI from the transport thread.
+async fn exec_cancelled(cancelled: Option<Arc<AtomicBool>>) {
+    let Some(flag) = cancelled else {
+        return std::future::pending().await;
+    };
+    while !flag.load(Ordering::Acquire) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Ordinary tool output historically truncates; bounded telemetry rejects the
+/// whole reading so a partial device list is never presented as complete.
+fn append_exec_output(
+    output: &mut Vec<u8>,
+    data: &[u8],
+    limit: usize,
+    strict: bool,
+) -> Result<(), String> {
+    let room = limit.saturating_sub(output.len());
+    if strict && data.len() > room {
+        return Err(t!("ssh.exec.output_limit").to_string());
+    }
+    output.extend_from_slice(&data[..data.len().min(room)]);
+    Ok(())
 }
 
 /// Open a channel and run one probe command on it. Best effort throughout: a
@@ -611,6 +679,11 @@ mod tests {
                 .execs
                 .push(String::from_utf8_lossy(command).into_owned());
             session.channel_success(channel)?;
+            if command == b"gpu-test-hang" {
+                // An unresponsive telemetry command: only the client's
+                // cancellation/timeout can release its place in the queue.
+                return Ok(());
+            }
             if command == CLI_COMMAND.as_bytes() {
                 session.data(channel, b"out".to_vec())?;
                 session.extended_data(channel, 1, b"err".to_vec())?;
@@ -827,6 +900,51 @@ mod tests {
         secrets: SharedSecretStore,
         wait_for_host_os: bool,
         execs: &[&str],
+        answer: impl FnMut(&ConnectionPromptKind) -> ConnectionPromptReply,
+    ) -> ConnectionReport {
+        connect_with_commands(
+            login,
+            known_hosts,
+            secrets,
+            wait_for_host_os,
+            |command_tx| {
+                // All sent at once: the transport runs them one after another.
+                let replies: Vec<_> = execs
+                    .iter()
+                    .map(|command| {
+                        let (reply, receiver) = mpsc::channel();
+                        command_tx
+                            .send(TerminalTransportCommand::Exec(ExecRequest {
+                                command: command.to_string(),
+                                reply,
+                                limits: None,
+                                cancelled: None,
+                            }))
+                            .unwrap();
+                        receiver
+                    })
+                    .collect();
+                replies
+                    .into_iter()
+                    .map(|receiver| {
+                        receiver
+                            .recv_timeout(EXEC_TIMEOUT)
+                            .expect("a command beside the shell was never answered")
+                    })
+                    .collect()
+            },
+            answer,
+        )
+    }
+
+    fn connect_with_commands(
+        login: HostLogin,
+        known_hosts: &Path,
+        secrets: SharedSecretStore,
+        wait_for_host_os: bool,
+        commands: impl FnOnce(
+            &mpsc::Sender<TerminalTransportCommand>,
+        ) -> Vec<crate::terminal::ExecResult>,
         mut answer: impl FnMut(&ConnectionPromptKind) -> ConnectionPromptReply,
     ) -> ConnectionReport {
         let mut report = ConnectionReport::default();
@@ -886,27 +1004,7 @@ mod tests {
                 }
             }
         }
-        // All sent at once: the transport runs them one after another.
-        let replies: Vec<_> = execs
-            .iter()
-            .map(|command| {
-                let (reply, receiver) = mpsc::channel();
-                command_tx
-                    .send(TerminalTransportCommand::Exec(ExecRequest {
-                        command: command.to_string(),
-                        reply,
-                    }))
-                    .unwrap();
-                receiver
-            })
-            .collect();
-        for receiver in replies {
-            report.execs.push(
-                receiver
-                    .recv_timeout(EXEC_TIMEOUT)
-                    .expect("a command beside the shell was never answered"),
-            );
-        }
+        report.execs = commands(&command_tx);
         command_tx.send(TerminalTransportCommand::Shutdown).unwrap();
         done_rx
             .recv_timeout(SHUTDOWN_TIMEOUT + Duration::from_secs(1))
@@ -914,6 +1012,123 @@ mod tests {
             .unwrap();
         worker.join().unwrap();
         report
+    }
+
+    #[test]
+    fn cancelled_gpu_requests_leave_the_exec_queue_and_connection_usable() {
+        let server = start_server(TestAuth::Password)
+            .expect("GPU lifecycle integration tests require loopback sockets");
+        let directory = tempfile::tempdir().unwrap();
+        let host = password_host(server.port);
+        let report = connect_with_commands(
+            HostLogin::of(&host, None),
+            &directory.path().join("known_hosts"),
+            Arc::new(NoSecretStore),
+            false,
+            |commands| {
+                let active = Arc::new(AtomicBool::new(false));
+                let queued = Arc::new(AtomicBool::new(false));
+                let request = |command: &str, cancelled: Option<Arc<AtomicBool>>| {
+                    let (reply, receiver) = mpsc::channel();
+                    commands
+                        .send(TerminalTransportCommand::Exec(ExecRequest {
+                            command: command.into(),
+                            reply,
+                            limits: cancelled.as_ref().map(|_| (Duration::from_secs(3), 1024)),
+                            cancelled,
+                        }))
+                        .unwrap();
+                    receiver
+                };
+                let first = request("gpu-test-hang", Some(active.clone()));
+                let second = request("gpu-test-cancelled-in-queue", Some(queued.clone()));
+                let ordinary = request(CLI_COMMAND, None);
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while !server
+                    .state
+                    .lock()
+                    .unwrap()
+                    .execs
+                    .iter()
+                    .any(|command| command == "gpu-test-hang")
+                {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "first request never started"
+                    );
+                    thread::sleep(Duration::from_millis(5));
+                }
+                queued.store(true, Ordering::Release);
+                active.store(true, Ordering::Release);
+                vec![first, second, ordinary]
+                    .into_iter()
+                    .map(|reply| {
+                        reply
+                            .recv_timeout(Duration::from_secs(2))
+                            .expect("cancelled GPU blocked the queue")
+                    })
+                    .collect()
+            },
+            trust_and_type_password,
+        );
+        assert!(report.execs[0].is_err());
+        assert!(report.execs[1].is_err());
+        assert_eq!(report.execs[2], Ok("out".into()));
+        assert!(
+            !server
+                .state
+                .lock()
+                .unwrap()
+                .execs
+                .iter()
+                .any(|command| command == "gpu-test-cancelled-in-queue")
+        );
+    }
+
+    #[test]
+    fn bounded_gpu_timeout_and_output_limit_do_not_break_ordinary_exec() {
+        let server = start_server(TestAuth::Password)
+            .expect("GPU lifecycle integration tests require loopback sockets");
+        let directory = tempfile::tempdir().unwrap();
+        let host = password_host(server.port);
+        let report = connect_with_commands(
+            HostLogin::of(&host, None),
+            &directory.path().join("known_hosts"),
+            Arc::new(NoSecretStore),
+            false,
+            |commands| {
+                [
+                    ("gpu-test-hang", Some((Duration::from_millis(50), 1024))),
+                    (CLI_COMMAND, Some((Duration::from_secs(2), 2))),
+                    (CLI_COMMAND, None),
+                ]
+                .into_iter()
+                .map(|(command, limits)| {
+                    let (reply, receiver) = mpsc::channel();
+                    commands
+                        .send(TerminalTransportCommand::Exec(ExecRequest {
+                            command: command.into(),
+                            reply,
+                            limits,
+                            cancelled: None,
+                        }))
+                        .unwrap();
+                    receiver
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|reply| {
+                    reply
+                        .recv_timeout(Duration::from_secs(3))
+                        .expect("bounded request blocked the queue")
+                })
+                .collect()
+            },
+            trust_and_type_password,
+        );
+        assert!(report.execs[0].is_err());
+        assert!(report.execs[1].is_err());
+        assert_eq!(report.execs[2], Ok("out".into()));
     }
 
     #[test]
@@ -2135,5 +2350,60 @@ mod tests {
                 .is_err()
         );
         worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod exec_output_tests {
+    use super::append_exec_output;
+
+    #[test]
+    fn only_cancelled_requests_finish_the_cancellation_wait() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::Duration;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let flag = Arc::new(AtomicBool::new(false));
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(1),
+                    super::exec_cancelled(Some(flag.clone()))
+                )
+                .await
+                .is_err()
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_millis(1), super::exec_cancelled(None))
+                    .await
+                    .is_err()
+            );
+            flag.store(true, Ordering::Release);
+            tokio::time::timeout(Duration::from_secs(1), super::exec_cancelled(Some(flag)))
+                .await
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn bounded_telemetry_rejects_truncation_across_chunks() {
+        let mut output = Vec::new();
+        append_exec_output(&mut output, b"123", 5, true).unwrap();
+        append_exec_output(&mut output, b"45", 5, true).unwrap();
+        assert!(append_exec_output(&mut output, b"6", 5, true).is_err());
+        assert_eq!(output, b"12345");
+    }
+
+    #[test]
+    fn ordinary_exec_retains_its_truncation_behavior() {
+        let mut output = Vec::new();
+        append_exec_output(&mut output, b"123456", 5, false).unwrap();
+        append_exec_output(&mut output, b"7", 5, false).unwrap();
+        assert_eq!(output, b"12345");
     }
 }

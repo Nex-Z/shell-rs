@@ -1,6 +1,6 @@
 [package]
 name = "shellrs"
-version = "0.1.9"
+version = "0.1.10-preview.1"
 edition = "2024"
 publish = false
 description = "SSH client and host manager: terminal, SFTP, port forwarding"
@@ -19,6 +19,10 @@ path = "src/main.rs"
 [[bin]]
 name = "shellrs-cli"
 path = "src/bin/shellrs-cli.rs"
+
+[features]
+# Only for isolated portable preview packages; normal builds stay unchanged.
+preview = []
 
 [dependencies]
 gpui-kit = { version = "0.6.1", features = [

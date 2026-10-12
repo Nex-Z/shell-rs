@@ -9,7 +9,10 @@ use gpui_kit::component::{
     ActiveTheme as _, Root, Sizable as _, Theme, TitleBar, WindowExt as _,
     button::ButtonVariant,
     dialog::DialogButtonProps,
-    dock::{DockArea, DockEvent, DockLayout, DockPlacement, PanelId, TabGroup, panel_handle},
+    dock::{
+        BasePanel as _, DockArea, DockEvent, DockLayout, DockPlacement, PanelId, TabGroup,
+        panel_handle,
+    },
     form::{Field, Form},
     h_flex,
     input::{Input, InputContentType, InputState},
@@ -161,6 +164,8 @@ pub struct Workspace {
     pub(super) terminals: HashMap<RemoteTerminalId, Entity<TerminalPanel>>,
     /// SFTP tabs; a host can have several, like terminals.
     pub(super) explorers: HashMap<ExplorerId, Entity<ExplorerPanel>>,
+    /// One lazily opened file sidebar per host, separate from its SFTP tabs.
+    pub(super) file_sidebars: HashMap<HostId, ExplorerId>,
     pub(super) local_terminals: HashMap<LocalTerminalId, Entity<LocalTerminalPanel>>,
     /// The settings tab, while it is open. There is only ever one.
     settings_tab: Option<Entity<SettingsPanel>>,
@@ -534,6 +539,7 @@ impl Workspace {
             recent,
             terminals,
             explorers: HashMap::new(),
+            file_sidebars: HashMap::new(),
             local_terminals: HashMap::new(),
             settings_tab: None,
             settings,
@@ -594,7 +600,7 @@ impl Workspace {
     }
 
     /// A host's terminal tabs, in no particular order.
-    fn terminals_of<'a>(
+    pub(super) fn terminals_of<'a>(
         &'a self,
         host: HostId,
         cx: &'a App,
@@ -608,7 +614,67 @@ impl Workspace {
         self.explorers.get(&id)
     }
 
-    /// A host's SFTP tabs, oldest first.
+    /// The file sidebar for this host, if it has been opened.
+    pub fn file_sidebar(&self, host: HostId) -> Option<&Entity<ExplorerPanel>> {
+        self.file_sidebars
+            .get(&host)
+            .and_then(|id| self.explorers.get(id))
+    }
+
+    /// Open a host's sidebar connection once, retaining it across terminal
+    /// switches so paths, editors and ongoing transfers keep their owner.
+    pub(super) fn ensure_file_sidebar(
+        &mut self,
+        host: HostId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ExplorerPanel> {
+        if let Some(panel) = self.file_sidebar(host) {
+            return panel.clone();
+        }
+        let id = ExplorerId(self.next_explorer_id);
+        self.next_explorer_id += 1;
+        let (panel, subscription) = new_explorer_panel(self, id, host, window, cx);
+        panel.update(cx, |panel, cx| panel.show_in_sidebar(cx));
+        self._subscriptions.push(subscription);
+        self.explorers.insert(id, panel.clone());
+        self.file_sidebars.insert(host, id);
+        self._subscriptions
+            .push(cx.observe_in(&panel, window, move |_, _, window, cx| {
+                // Run after a read result's EditFile event has registered its editor.
+                cx.defer_in(window, move |this, window, cx| {
+                    this.forget_unused_temporary_host(host, window, cx)
+                });
+            }));
+        panel
+    }
+
+    /// Keep a temporary connection's unfinished queue reachable when its
+    /// last terminal closes, using the same connection and transfer owner.
+    pub(super) fn detach_file_sidebar(
+        &mut self,
+        host: HostId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.file_sidebars.remove(&host) else {
+            return;
+        };
+        let Some(panel) = self.explorers.get(&id).cloned() else {
+            return;
+        };
+        self.tools
+            .update(cx, |tools, cx| tools.forget_files(id, window, cx));
+        panel.update(cx, |panel, cx| panel.detach_sidebar(cx));
+        let focus = panel.read(cx).focus_handle(cx);
+        self._subscriptions
+            .push(follow_focus(CenterTab::Explorer(id), &focus, window, cx));
+        self.dock_area.update(cx, |area, cx| {
+            area.add_panel_view(panel_handle(panel), DockPlacement::Center, None, window, cx);
+        });
+    }
+
+    /// A host's SFTP connections (tabs and file sidebar), oldest first.
     pub fn explorers_of(&self, host: HostId, cx: &App) -> Vec<Entity<ExplorerPanel>> {
         let mut explorers: Vec<_> = self
             .explorers
@@ -1416,11 +1482,19 @@ impl Workspace {
             } else {
                 Vec::new()
             };
+            let sidebar = self.file_sidebars.values().any(|sidebar| *sidebar == id);
             let unsaved = (!unsaved.is_empty()).then(|| {
-                t!(
-                    "workspace.unsaved.close_sftp",
-                    files = describe_files(&unsaved)
-                )
+                if sidebar {
+                    t!(
+                        "tools.files.close_unsaved",
+                        files = describe_files(&unsaved)
+                    )
+                } else {
+                    t!(
+                        "workspace.unsaved.close_sftp",
+                        files = describe_files(&unsaved)
+                    )
+                }
                 .to_string()
             });
             if panel.read(cx).is_transferring() {
@@ -1437,7 +1511,11 @@ impl Workspace {
             } else if let Some(unsaved) = unsaved {
                 let dispatch = self.focus_handle.clone();
                 confirm_danger(
-                    t!("workspace.unsaved.close_sftp_title"),
+                    if sidebar {
+                        t!("tools.files.close_title")
+                    } else {
+                        t!("workspace.unsaved.close_sftp_title")
+                    },
                     Some(unsaved.into()),
                     t!("workspace.unsaved.discard_and_close"),
                     Rc::new(move |window, cx| {
@@ -1457,15 +1535,38 @@ impl Workspace {
         }
     }
 
-    fn remove_explorer(&mut self, id: ExplorerId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn remove_explorer(
+        &mut self,
+        id: ExplorerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(panel) = self.explorers.get(&id).cloned() {
             self.cancel_prompts_for_owner(
                 PromptOwner::Sftp(id, panel.read(cx).generation()),
                 window,
                 cx,
             );
-            self.dock_area
-                .update(cx, |area, cx| area.remove_panel(panel, window, cx));
+            if self.file_sidebars.values().any(|sidebar| *sidebar == id) {
+                self.file_sidebars.retain(|_, sidebar| *sidebar != id);
+                self.tools
+                    .update(cx, |tools, cx| tools.forget_files(id, window, cx));
+                // This explorer is embedded, so no Dock removal calls its
+                // lifecycle hook. Close its connection and editors the same way.
+                panel.update(cx, |panel, cx| panel.on_removed(window, cx));
+                self.explorers.remove(&id);
+                // The old Closed event must finish cleaning its editors before
+                // a reopened sidebar gets a fresh id and the latest login.
+                cx.defer_in(window, move |this, window, cx| {
+                    // GPUI upgrades the emitting entity when delivering Closed.
+                    // Keep even an unshown sidebar alive until that delivery.
+                    drop(panel);
+                    this.sync_tool_sidebar(window, cx)
+                });
+            } else {
+                self.dock_area
+                    .update(cx, |area, cx| area.remove_panel(panel, window, cx));
+            }
         }
     }
     fn on_explorer_action(
@@ -2011,9 +2112,9 @@ impl Workspace {
                 .update(cx, |area, cx| area.remove_panel(terminal, window, cx));
         }
         for explorer in self.explorers_of(id, cx) {
-            self.explorers.remove(&explorer.read(cx).id());
-            self.dock_area
-                .update(cx, |area, cx| area.remove_panel(explorer, window, cx));
+            let explorer_id = explorer.read(cx).id();
+            self.remove_explorer(explorer_id, window, cx);
+            self.explorers.remove(&explorer_id);
         }
     }
 

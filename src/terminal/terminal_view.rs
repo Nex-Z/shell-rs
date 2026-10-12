@@ -405,6 +405,20 @@ impl TerminalView {
         self.engine.read(cx).exec(command)
     }
 
+    /// Run optional telemetry with a bounded response and wait.
+    pub(crate) fn exec_bounded(
+        &self,
+        command: String,
+        timeout: std::time::Duration,
+        output_limit: usize,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cx: &App,
+    ) -> Option<std::sync::mpsc::Receiver<super::ExecResult>> {
+        self.engine
+            .read(cx)
+            .exec_bounded(command, timeout, output_limit, cancelled)
+    }
+
     /// Take up an `exec --terminal` run; see [`TerminalEngine::run_command`].
     pub fn run_command(&self, run: super::RunHandle, cx: &App) -> Result<(), super::RunFailure> {
         self.engine.read(cx).run_command(run)

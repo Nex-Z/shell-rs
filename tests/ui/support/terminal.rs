@@ -31,6 +31,8 @@ pub struct FakeTerminalFactory {
     /// last one repeats. With none the requests are dropped, the way a
     /// local PTY drops them.
     pub exec_outputs: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// GPU readings have a separate protocol and never consume ordinary tool replies.
+    pub gpu_outputs: Arc<Mutex<std::collections::VecDeque<String>>>,
     /// The commands run beside the shell, in order.
     pub exec_commands: Arc<Mutex<Vec<String>>>,
 }
@@ -117,6 +119,7 @@ impl TerminalTransportFactory for FakeTerminalFactory {
             writes: self.writes.clone(),
             resizes: self.resizes.clone(),
             exec_outputs: self.exec_outputs.clone(),
+            gpu_outputs: self.gpu_outputs.clone(),
             exec_commands: self.exec_commands.clone(),
         })
     }
@@ -128,6 +131,8 @@ pub struct FakeTerminalTransport {
     pub writes: Arc<Mutex<Vec<Vec<u8>>>>,
     pub resizes: Arc<Mutex<Vec<TerminalSize>>>,
     pub exec_outputs: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// GPU readings have a separate protocol and never consume ordinary tool replies.
+    pub gpu_outputs: Arc<Mutex<std::collections::VecDeque<String>>>,
     pub exec_commands: Arc<Mutex<Vec<String>>>,
 }
 
@@ -189,6 +194,16 @@ impl TerminalTransport for FakeTerminalTransport {
                         .lock()
                         .unwrap_or_else(|error| error.into_inner())
                         .push(request.command.clone());
+                    if request.command.contains("@@shellrs-gpu-v1") {
+                        let mut outputs = self
+                            .gpu_outputs
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner());
+                        let output = if outputs.len() > 1 { outputs.pop_front() } else { outputs.front().cloned() }
+                            .unwrap_or_else(|| "@@shellrs-gpu-v1\n@@nvidia-begin\n@@nvidia-status=missing\n@@sysfs-begin\n@@sysfs-status=ok\n@@shellrs-gpu-end\n".into());
+                        let _ = request.reply.send(Ok(output));
+                        continue;
+                    }
                     let mut outputs = self
                         .exec_outputs
                         .lock()

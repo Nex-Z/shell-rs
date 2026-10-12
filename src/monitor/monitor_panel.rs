@@ -1,6 +1,10 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
@@ -18,6 +22,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::MonitorDetail;
+use super::gpu::{self, Device, Problem as GpuProblem};
 use super::linux::{self, Parsed, Parts};
 use super::model::{
     DiskUsage, InterfaceRate, Load, Memory, Snapshot, SystemInfo, Tracker, bars_per_row,
@@ -36,6 +41,10 @@ const SECOND_READING: Duration = Duration::from_secs(1);
 /// Disks are read this seldom: they fill slowly, and `df` is the slowest
 /// part of a reading.
 const DISK_INTERVAL: Duration = Duration::from_secs(30);
+const GPU_INTERVAL: Duration = Duration::from_secs(6);
+const GPU_IDLE_INTERVAL: Duration = Duration::from_secs(30);
+const GPU_TIMEOUT: Duration = Duration::from_secs(3);
+const GPU_OUTPUT_LIMIT: usize = 64 * 1024;
 /// 系统监控: the CPU, memory, network and disks of the host of the SSH
 /// terminal in front, read every two seconds while the panel shows.
 ///
@@ -61,6 +70,7 @@ pub struct MonitorPanel {
     /// they work whatever is focused.
     dispatch: FocusHandle,
     sampling: Option<Task<()>>,
+    gpu_sampling: Option<Task<()>>,
 }
 
 #[derive(Default)]
@@ -73,6 +83,84 @@ struct HostState {
     /// With when they were read.
     disks: Option<(Instant, Vec<DiskUsage>)>,
     problem: Option<Problem>,
+    gpu: GpuState,
+}
+
+/// Lives inside the sampling task, so dropping it also cancels queued and
+/// in-flight telemetry on the transport thread.
+#[derive(Default)]
+struct GpuCancellation(Arc<AtomicBool>);
+
+impl GpuCancellation {
+    fn flag(&self) -> Arc<AtomicBool> {
+        self.0.clone()
+    }
+}
+
+impl Drop for GpuCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// GPU failure is separate from the CPU/network reading. Transport failure
+/// stops queries until reconnect: an unresponsive driver must not leave a
+/// growing collection of remote processes or monopolize the exec queue.
+#[derive(Default)]
+struct GpuState {
+    connection: Option<u64>,
+    devices: Vec<Device>,
+    problem: Option<String>,
+    sampled_at: Option<Instant>,
+    stopped: bool,
+}
+
+impl GpuState {
+    fn interval(&self) -> Duration {
+        if self.devices.is_empty()
+            || self.problem.is_some()
+            || self.devices.iter().all(|device| device.problem.is_some())
+        {
+            GPU_IDLE_INTERVAL
+        } else {
+            GPU_INTERVAL
+        }
+    }
+
+    fn due(&self, connection: u64, now: Instant) -> bool {
+        if self.connection != Some(connection) {
+            return true;
+        }
+        !self.stopped
+            && self
+                .sampled_at
+                .is_none_or(|at| now.saturating_duration_since(at) >= self.interval())
+    }
+
+    fn record(&mut self, connection: u64, result: ExecResult, now: Instant) {
+        if self.connection != Some(connection) {
+            *self = Self::default();
+        }
+        self.connection = Some(connection);
+        self.sampled_at = Some(now);
+        match result {
+            Ok(output) => match gpu::parse(&output) {
+                Ok(devices) => {
+                    self.devices = devices;
+                    self.problem = None;
+                }
+                Err(_) => {
+                    self.devices.clear();
+                    self.problem = Some(t!("monitor.gpu.invalid").to_string());
+                }
+            },
+            Err(_) => {
+                self.devices.clear();
+                self.problem = Some(t!("monitor.gpu.failed").to_string());
+                self.stopped = true;
+            }
+        }
+    }
 }
 
 impl HostState {
@@ -118,6 +206,7 @@ impl MonitorPanel {
             interfaces_unfolded: false,
             dispatch,
             sampling: None,
+            gpu_sampling: None,
         }
     }
 
@@ -148,9 +237,11 @@ impl MonitorPanel {
     /// answered to no one.
     fn restart(&mut self, cx: &mut Context<Self>) {
         self.sampling = None;
+        self.gpu_sampling = None;
         let Some(target) = self.target.clone().filter(|_| self.active) else {
             return;
         };
+        self.start_gpu(target.clone(), cx);
         self.sampling = Some(cx.spawn(async move |this, cx| {
             let mut first = true;
             loop {
@@ -181,7 +272,14 @@ impl MonitorPanel {
                 };
                 if this
                     .update(cx, |this, cx| {
-                        this.record(target.terminal, connection, outcome, cx)
+                        if target
+                            .view
+                            .upgrade()
+                            .is_some_and(|view| view.read(cx).generation(cx) == connection)
+                            || matches!(outcome, Outcome::NotConnected)
+                        {
+                            this.record(target.terminal, connection, outcome, cx);
+                        }
                     })
                     .is_err()
                 {
@@ -190,6 +288,65 @@ impl MonitorPanel {
                 let pause = if first { SECOND_READING } else { INTERVAL };
                 first = false;
                 cx.background_executor().timer(pause).await;
+            }
+        }));
+    }
+
+    fn start_gpu(&mut self, target: ExecTarget, cx: &mut Context<Self>) {
+        let cancellation = GpuCancellation::default();
+        self.gpu_sampling = Some(cx.spawn(async move |this, cx| {
+            loop {
+                let request = this.update(cx, |this, cx| {
+                    let view = target.view.upgrade()?;
+                    let view = view.read(cx);
+                    let connection = view.generation(cx);
+                    let now = cx.background_executor().now();
+                    let host = this.hosts.get(&target.terminal)?;
+                    // Wait for a successful Linux reading on this connection.
+                    if host.problem.is_some()
+                        || !host
+                            .system
+                            .as_ref()
+                            .is_some_and(|(id, _)| *id == connection)
+                        || !host.gpu.due(connection, now)
+                    {
+                        return None;
+                    }
+                    let reply = view.exec_bounded(
+                        gpu::command(),
+                        GPU_TIMEOUT,
+                        GPU_OUTPUT_LIMIT,
+                        cancellation.flag(),
+                        cx,
+                    )?;
+                    Some((reply, connection))
+                });
+                let Ok(request) = request else { break };
+                if let Some((reply, connection)) = request {
+                    let result = exec_answer(reply, cx).await;
+                    if this
+                        .update(cx, |this, cx| {
+                            let current = target
+                                .view
+                                .upgrade()
+                                .is_some_and(|view| view.read(cx).generation(cx) == connection);
+                            if current && let Some(result) = result {
+                                let now = cx.background_executor().now();
+                                this.hosts
+                                    .entry(target.terminal)
+                                    .or_default()
+                                    .gpu
+                                    .record(connection, result, now);
+                                cx.notify();
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                // A local timer only. No remote request before the reading is due.
+                cx.background_executor().timer(Duration::from_secs(1)).await;
             }
         }));
     }
@@ -234,6 +391,14 @@ impl Render for MonitorPanel {
         let system = host.and_then(|host| host.system.as_ref().map(|(_, system)| system));
         let disks = host.and_then(|host| host.disks.as_ref().map(|(_, disks)| disks.as_slice()));
         let problem = host.and_then(|host| host.problem.clone());
+        let connection = self
+            .target
+            .as_ref()
+            .and_then(|target| target.view.upgrade())
+            .map(|view| view.read(cx).generation(cx));
+        let gpu = host
+            .filter(|host| host.gpu.connection == connection)
+            .map(|host| &host.gpu);
         let interfaces_unfolded = self.interfaces_unfolded;
         let cores = CoresLayout {
             unfolded: self.cores_unfolded,
@@ -264,6 +429,35 @@ impl Render for MonitorPanel {
                     })
                     .child(render_cpu(system, snapshot, &cores, dispatch, cx))
                     .child(render_memory(&snapshot.memory, cx))
+                    .when_some(gpu, |panel, gpu| {
+                        let stale = gpu.sampled_at.is_some_and(|at| {
+                            cx.background_executor().now().saturating_duration_since(at)
+                                > GPU_INTERVAL + GPU_TIMEOUT
+                        });
+                        panel
+                            .when(stale && !gpu.devices.is_empty(), |panel| {
+                                panel.child(
+                                    div()
+                                        .id("monitor-gpu-stale")
+                                        .test_support()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(t!("monitor.gpu.stale")),
+                                )
+                            })
+                            .children(gpu.devices.iter().map(|device| render_gpu(device, cx)))
+                            .when_some(gpu.problem.as_ref(), |panel, problem| {
+                                panel.child(
+                                    div()
+                                        .id("monitor-gpu-error")
+                                        .test_support()
+                                        .aria_label(problem.clone())
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(problem.clone()),
+                                )
+                            })
+                    })
                     .child(render_network(snapshot, interfaces_unfolded, dispatch, cx))
                     .when_some(disks, |panel, disks| panel.child(render_disks(disks, cx))),
                 (_, Some(problem)) => panel.child(render_problem(&problem, cx)),
@@ -470,31 +664,147 @@ fn gauge(id: &'static str, percent: Option<f32>, cx: &App) -> impl IntoElement {
 
 /// A labelled bar: the label and the share above it.
 fn meter(
-    id: &'static str,
+    id: impl Into<SharedString>,
     label: SharedString,
     percent: Option<f32>,
     cx: &App,
 ) -> impl IntoElement {
-    let color = load_color(percent.unwrap_or(0.), cx);
+    let id = id.into();
+    let color = percent.map_or(cx.theme().muted_foreground, |value| load_color(value, cx));
     let text = percent.map_or("—".into(), format_percent);
     v_flex()
         .gap_1p5()
         .child(
             h_flex().justify_between().text_sm().child(label).child(
                 numeric(text.clone(), cx)
-                    .id(id)
+                    .id(id.clone())
                     .test_support()
                     .aria_label(text)
                     .text_color(color)
                     .font_weight(FontWeight::SEMIBOLD),
             ),
         )
+        .when_some(percent, |meter, percent| {
+            meter.child(
+                Progress::new(SharedString::from(format!("{id}-bar")))
+                    .small()
+                    .value(percent)
+                    .color(color),
+            )
+        })
+}
+
+fn render_gpu(device: &Device, cx: &App) -> impl IntoElement {
+    let id = format!("monitor-gpu:{}", device.id);
+    let memory_percent = device
+        .memory_used
+        .zip(device.memory_total)
+        .filter(|(used, total)| *total > 0 && used <= total)
+        .map(|(used, total)| (used as f64 * 100. / total as f64) as f32);
+    let memory = match (device.memory_used, device.memory_total) {
+        (Some(used), Some(total)) => format!("{} / {}", format_bytes(used), format_bytes(total)),
+        (Some(used), None) => format!("{} / —", format_bytes(used)),
+        (None, Some(total)) => format!("— / {}", format_bytes(total)),
+        _ => "—".to_string(),
+    };
+    let temperature = device
+        .temperature
+        .map_or("—".to_string(), |value| format!("{value:.0} °C"));
+    let power = device
+        .power
+        .map_or("—".to_string(), |value| format!("{value:.1} W"));
+    GroupBox::new()
+        .id(SharedString::from(id.clone()))
+        .fill()
         .child(
-            Progress::new(SharedString::from(format!("{id}-bar")))
-                .small()
-                .value(percent.unwrap_or(0.))
-                .color(color),
+            h_flex()
+                .gap_2()
+                .min_w_0()
+                .child(
+                    Icon::new(IconName::Cpu)
+                        .small()
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .truncate()
+                        .child(device.name.clone()),
+                ),
         )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(format!("{} · {}", device.vendor, device.id)),
+        )
+        .child(meter(
+            format!("{id}:usage"),
+            t!("monitor.gpu.utilization"),
+            device.utilization,
+            cx,
+        ))
+        .child(
+            v_flex()
+                .gap_1p5()
+                .child(meter(
+                    format!("{id}:memory"),
+                    t!("monitor.gpu.memory"),
+                    memory_percent,
+                    cx,
+                ))
+                .child(
+                    numeric(memory.clone(), cx)
+                        .id(SharedString::from(format!("{id}:amount")))
+                        .test_support()
+                        .aria_label(memory)
+                        .text_xs(),
+                ),
+        )
+        .child(
+            h_flex()
+                .justify_between()
+                .gap_2()
+                .text_xs()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(t!("monitor.gpu.temperature")),
+                        )
+                        .child(numeric(temperature, cx)),
+                )
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .items_end()
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(t!("monitor.gpu.power")),
+                        )
+                        .child(numeric(power, cx)),
+                ),
+        )
+        .when_some(device.problem.as_ref(), |card, problem| {
+            let text = match problem {
+                GpuProblem::MissingTool => t!("monitor.gpu.missing_tool"),
+                GpuProblem::PermissionDenied => t!("monitor.gpu.denied"),
+                GpuProblem::ToolFailed => t!("monitor.gpu.tool_failed"),
+                GpuProblem::MetricsUnavailable => t!("monitor.gpu.unavailable"),
+            };
+            card.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(text),
+            )
+        })
 }
 
 /// How the per-core bars lay out this frame.
@@ -866,4 +1176,67 @@ fn render_disks(disks: &[DiskUsage], cx: &App) -> impl IntoElement {
                     .text_color(cx.theme().muted_foreground),
             )
     }))
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::{GPU_IDLE_INTERVAL, GPU_INTERVAL, GpuCancellation, GpuState};
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    const EMPTY: &str = "@@shellrs-gpu-v1\n@@nvidia-begin\n@@nvidia-status=missing\n@@sysfs-begin\n@@sysfs-status=ok\n@@shellrs-gpu-end\n";
+    const ONE: &str = "@@shellrs-gpu-v1\n@@nvidia-begin\n0000:01:00.0, Test GPU, 50, 1024, 2048, 60, 100\n@@nvidia-status=0\n@@sysfs-begin\n@@sysfs-status=ok\n@@shellrs-gpu-end\n";
+
+    #[test]
+    fn dropping_a_gpu_task_cancels_its_outstanding_requests() {
+        let cancellation = GpuCancellation::default();
+        let request_flag = cancellation.flag();
+        assert!(!request_flag.load(Ordering::Acquire));
+        drop(cancellation);
+        assert!(request_flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn gpu_sampling_has_a_slower_cadence_and_empty_backoff() {
+        let at = Instant::now();
+        let mut state = GpuState::default();
+        assert!(state.due(1, at));
+        state.record(1, Ok(ONE.into()), at);
+        assert!(!state.due(1, at + Duration::from_secs(5)));
+        assert!(state.due(1, at + GPU_INTERVAL));
+        state.record(1, Ok(EMPTY.into()), at);
+        assert!(state.devices.is_empty());
+        assert!(state.problem.is_none());
+        assert!(!state.due(1, at + GPU_INTERVAL));
+        assert!(state.due(1, at + GPU_IDLE_INTERVAL));
+    }
+
+    #[test]
+    fn gpu_transport_failure_stops_until_a_new_connection() {
+        let at = Instant::now();
+        let mut state = GpuState::default();
+        state.record(1, Ok(ONE.into()), at);
+        state.record(1, Err("timed out".into()), at);
+        assert!(
+            state.devices.is_empty(),
+            "old numbers are not shown as current"
+        );
+        assert!(state.problem.is_some());
+        assert!(!state.due(1, at + Duration::from_secs(3600)));
+        assert!(state.due(2, at));
+        state.record(2, Ok(EMPTY.into()), at);
+        assert!(!state.stopped);
+        assert!(state.problem.is_none());
+    }
+
+    #[test]
+    fn malformed_gpu_output_is_not_an_empty_device_list() {
+        let at = Instant::now();
+        let mut state = GpuState::default();
+        state.record(1, Ok("truncated".into()), at);
+        assert!(state.problem.is_some());
+        assert!(!state.stopped);
+        assert!(!state.due(1, at + GPU_INTERVAL));
+        assert!(state.due(1, at + GPU_IDLE_INTERVAL));
+    }
 }

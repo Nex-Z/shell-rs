@@ -28,6 +28,8 @@ pub(super) struct ListingContext {
     pub path: String,
     pub selection: Rc<Selection>,
     pub transfer_enabled: bool,
+    /// Compact sidebars upload by dragging in; downloads use their menu.
+    pub compact: bool,
     pub dispatch: Option<FocusHandle>,
     pub pane: Option<WeakEntity<FilePane>>,
     /// What the last right-click landed on, read by the list's context menu.
@@ -187,6 +189,17 @@ impl FileListing {
         }
     }
 
+    pub(super) fn make_compact(&mut self) {
+        self.columns = vec![
+            name_column(px(200.)),
+            Column::new("size", column_title("size"))
+                .width(px(88.))
+                .sortable(),
+        ];
+        self.sort = None;
+        self.apply_sort();
+    }
+
     pub(super) fn configure(&mut self, context: ListingContext) {
         self.context = context;
     }
@@ -293,6 +306,9 @@ impl FileListing {
             }),
             None => cell,
         };
+        if self.context.compact {
+            return cell;
+        }
         let paths = names.iter().map(|name| self.child_path(name));
         match self.side {
             PaneSide::Local => drag_files(

@@ -152,7 +152,10 @@ impl ExplorerPanel {
                     move |_, window, cx| {
                         let owner = owner.clone();
                         window.defer(cx, move |_, cx| {
-                            let _ = owner.update(cx, |panel, _| panel.dialog_open = false);
+                            let _ = owner.update(cx, |panel, cx| {
+                                panel.dialog_open = false;
+                                cx.notify();
+                            });
                         });
                         window.focus(&focus, cx);
                     }

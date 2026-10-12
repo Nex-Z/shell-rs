@@ -310,6 +310,37 @@ fn a_development_build_does_not_check(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_preview_cannot_enable_updates_through_settings_or_manual_actions(cx: &mut TestAppContext) {
+    let (_, workspace) = open_workspace(cx);
+    let fixture = serve_updates(cx, &workspace, Ok("0.9.0"), installable());
+    let services = UpdateServices {
+        feed: fixture.feed.clone(),
+        installer: fixture.installer.clone(),
+        keys: TrustedKeys::new([fixture.feed.pair.pk.to_base64().as_str()]),
+        release_build: false,
+        current: Version::parse(RUNNING_VERSION).unwrap(),
+        folder: fixture.folder.path().to_path_buf(),
+        draw: 0.5,
+    };
+    workspace.update(cx, |workspace, cx| {
+        workspace.updater().update(cx, |updater, cx| {
+            updater.set_services(services, cx);
+            updater.set_automatic(false, cx);
+            updater.set_channel(Channel::Beta, cx);
+            updater.set_automatic(true, cx);
+            updater.check(cx);
+            updater.download(cx);
+            updater.restart(cx);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(fixture.fetches(), 0);
+    assert_eq!(fixture.downloads(), 0);
+    assert!(fixture.installer.staged.lock().unwrap().is_empty());
+    assert!(fixture.installer.applied().is_empty());
+}
+
+#[gpui_kit::test]
 async fn checking_by_hand_says_when_shellrs_is_up_to_date(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
     let fixture = serve_updates(cx, &workspace, Ok(RUNNING_VERSION), installable());

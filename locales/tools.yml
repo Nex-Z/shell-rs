@@ -1,6 +1,6 @@
 _version: 2
 
-# The right sidebar: its seven tools, the words they share, and the
+# The right sidebar: its eight tools, the words they share, and the
 # workspace's confirmations and notifications for what they run.
 
 tools.kind.snippets:
@@ -249,3 +249,36 @@ tools.process.killed:
 tools.process.end_failed:
   zh-CN: 无法结束 %{name}（PID %{pid}）：%{error}
   en: "Couldn’t end %{name} (PID %{pid}): %{error}"
+
+# Remote file sidebar.
+tools.kind.files:
+  zh-CN: 文件
+  en: Files
+tools.files.drop_hint:
+  zh-CN: 拖入文件上传 · 右键下载
+  en: Drop files to upload · Right-click to download
+tools.files.connected:
+  zh-CN: SFTP 已连接
+  en: SFTP connected
+tools.files.connecting:
+  zh-CN: SFTP 连接中…
+  en: Connecting SFTP…
+tools.files.disconnected:
+  zh-CN: SFTP 已断开
+  en: SFTP disconnected
+tools.files.configuration_changed:
+  zh-CN: 主机连接设置已更改。原连接 %{endpoint} 的传输和已打开文件仍使用原配置；结束原文件连接后重新打开，才能浏览新目标。
+  en: "The host’s connection settings changed. Transfers and open files still use the original connection %{endpoint}. Reopen the file connection to browse the new target."
+tools.files.reopen:
+  zh-CN: 使用新配置重新打开…
+  en: Reopen with new settings…
+tools.files.close_title:
+  zh-CN: 结束原文件连接？
+  en: Close the original file connection?
+tools.files.close_unsaved:
+  zh-CN: "%{files}有未保存的修改，结束文件连接会一起关掉它们，修改会丢失。"
+  en: Closing the file connection also closes %{files}. Unsaved changes will be lost.
+
+tools.files.close_tab:
+  en: Close file tab
+  zh-CN: 关闭文件标签

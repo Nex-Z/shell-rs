@@ -46,6 +46,6 @@ pub fn init(cx: &mut gpui_kit::App) {
     // The identity the system shows notifications under, set before any
     // window opens: on Windows the AppUserModelID, the same as the macOS
     // bundle's.
-    cx.set_app_identity("com.shellrs.ShellRS", "ShellRS");
+    cx.set_app_identity(update::build_info::APP_ID, update::build_info::APP_NAME);
     app::init(cx);
 }

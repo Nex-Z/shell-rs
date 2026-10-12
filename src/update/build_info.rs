@@ -10,6 +10,27 @@ use serde::{Deserialize, Serialize};
 /// This build's version, from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Runtime identity only; previews do not register an installer or shortcuts.
+pub const APP_ID: &str = if cfg!(feature = "preview") {
+    "com.shellrs.ShellRS.Preview"
+} else {
+    "com.shellrs.ShellRS"
+};
+pub const APP_NAME: &str = if cfg!(feature = "preview") {
+    "ShellRS Preview"
+} else {
+    "ShellRS"
+};
+
+/// Both the native window title and the in-app title identify previews.
+pub fn app_title() -> String {
+    if cfg!(feature = "preview") {
+        format!("{APP_NAME} {VERSION}")
+    } else {
+        APP_NAME.into()
+    }
+}
+
 /// The commit the release was built from.
 pub const COMMIT: Option<&str> = option_env!("SHELLRS_COMMIT");
 
@@ -74,7 +95,11 @@ impl Channel {
 
     /// The channel this build follows; `None` for a development build.
     pub fn of_this_build() -> Option<Self> {
-        option_env!("SHELLRS_UPDATE_CHANNEL").and_then(Self::from_key)
+        if cfg!(feature = "preview") {
+            None
+        } else {
+            option_env!("SHELLRS_UPDATE_CHANNEL").and_then(Self::from_key)
+        }
     }
 
     pub fn manifest_url(self) -> String {
@@ -90,6 +115,28 @@ pub fn version() -> semver::Version {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_build_title_identifies_previews() {
+        #[cfg(feature = "preview")]
+        {
+            assert_eq!(app_title(), format!("ShellRS Preview {VERSION}"));
+            assert_eq!(APP_ID, "com.shellrs.ShellRS.Preview");
+            assert_eq!(APP_NAME, "ShellRS Preview");
+        }
+        #[cfg(not(feature = "preview"))]
+        {
+            assert_eq!(app_title(), "ShellRS");
+            assert_eq!(APP_ID, "com.shellrs.ShellRS");
+            assert_eq!(APP_NAME, "ShellRS");
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn preview_builds_never_follow_an_update_channel() {
+        assert_eq!(Channel::of_this_build(), None);
+    }
 
     #[test]
     fn each_channel_has_a_manifest_of_its_own() {

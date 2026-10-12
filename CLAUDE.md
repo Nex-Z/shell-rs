@@ -8,7 +8,7 @@ ShellRS（crate 与二进制都叫 `shellrs`）是 Xshell / WinSCP 式的 SSH �
 
 - **术语。** 保存的一项叫「主机」（量词「台」），代码和库里叫 host（`Host`、`HostId`、`HostStore`、`hosts` 表）。它以前叫「会话」/ `Session`，已全部改掉，新代码和文案别再用。填 IP / 域名的字段叫「地址」（`Host.address`）。SSH 协议层的 session（「SSH 会话通道」、russh 的 `Session`、SFTP 会话）照旧。英文用词见「多语言」的用词表。
 - **两种不保存的连接。** 「外部连接」：堡垒机像调 Xshell（`ssh://`、`-url`）或 WinSCP（`sftp://`）一样拉起 ShellRS，只开一个终端或 SFTP 标签（`HostStore::is_external`）。「临时连接」：标题栏「临时连接…」打开，功能齐全。两者共同的「不保存」在代码里叫 temporary（`HostInfo::temporary`）。
-- **全是真的。** SQLite（`~/Library/Application Support/shellrs/shellrs.db`，`SHELLRS_DATA_DIR` 可覆盖目录）、本地终端（`portable-pty` + `alacritty_terminal`）、SSH（`russh`）、SFTP（双栏、传输队列、断点续传）、端口转发（`-L` / `-R` / `-D`）、凭据、连接方式（直连、多级跳板、HTTP / SOCKS5 代理）、右侧栏七个工具、内置编辑器和预览、外部 CLI、在线升级、匿名使用统计（Aptabase）。密码和口令只进系统钥匙串（`keyring`），**数据库里永远不出现秘密**。
+- **全是真的。** SQLite（`~/Library/Application Support/shellrs/shellrs.db`，`SHELLRS_DATA_DIR` 可覆盖目录）、本地终端（`portable-pty` + `alacritty_terminal`）、SSH（`russh`）、SFTP（双栏、传输队列、断点续传）、端口转发（`-L` / `-R` / `-D`）、凭据、连接方式（直连、多级跳板、HTTP / SOCKS5 代理）、右侧栏八个工具、内置编辑器和预览、外部 CLI、在线升级、匿名使用统计（Aptabase）。密码和口令只进系统钥匙串（`keyring`），**数据库里永远不出现秘密**。
 
 做 UI 之前先读 `gpui-kit` 与 `gpui-kit-design-guides` 两个技能（其中的 Coding Guides 和 Design Guides 在本仓库是规范，不是参考）。不要凭记忆臆造 gpui-kit API：以 `~/.cargo/registry/src/*/gpui-component-0.6.1/`、`gpui-base-0.6.1/` 的源码或 `https://gpui-kit.com/component/<name>.md` 为准。
 
@@ -49,8 +49,9 @@ ShellRS（crate 与二进制都叫 `shellrs`）是 Xshell / WinSCP 式的 SSH �
 - **右侧栏**：窗口最右一列竖排的工具切换。
   - 显示规则：只跟着 SSH 远程终端出现，SFTP、本地终端、设置、开始页都不显示。它是工作区级的一份，开合和所选工具在所有终端间共用。默认收起，宽 320 px，只能往宽里拉。⌘⌥B / Ctrl+Alt+B 切换。
   - 中间区分屏时不隐藏：跟着最近一次在前（切到或焦点点进）、而且还在屏幕上的远程终端；点进另一半的 SFTP、本地终端等不换；屏幕上一个远程终端都没有才隐藏。标题写出主机（「系统监控 · web-01」），状态栏也跟焦点走。用户比较过「分屏就隐藏」，选了这个。
-  - 工具从上到下：命令片段、历史命令、Docker、系统服务、进程管理、网络连接、系统监控。
+  - 工具从上到下：命令片段、历史命令、文件、Docker、系统服务、进程管理、网络连接、系统监控。
   - 已知不是 Linux 的主机不显示系统监控、网络连接、进程管理、系统服务；已知是 Windows 的再去掉 Docker 和历史命令；外部连接只有命令片段。
+  - 「文件」是单栏远程文件工具，复用 ExplorerPanel 的 SFTP 连接、操作、编辑器和队列；Workspace 每主机懒建一份，独立于双栏标签，切终端或隐藏不销毁。侧栏列表只显示名称和大小，上传靠拖入，下载在右键；不做原生拖出和终端工作目录跟随。每个已确认操作保留自己的 ExplorerId 和端点；删除主机通过同一 Explorer 关闭路径释放。临时主机末个终端关闭时，未完成队列的原实体转为中央单栏标签，以保留继续/停止入口；空闲侧栏释放，编辑器占用的连接保留到编辑器关闭。
   - 系统监控每 2 秒读一次（运行时长随读数刷新，不自己走），磁盘每 30 秒，只在显示时读。≥ 70% 黄、≥ 90% 红。
   - 网络连接、系统服务、Docker、历史命令的列表不自己刷新：打开、换终端、点刷新、执行命令之后才读。进程管理每 15 秒读一次。
   - 结束进程，停止 / 重启服务，停止 / 重启 / 删除容器都先确认。不是 root 时用 `sudo -n`，要密码就报「需要 root 权限…」。
@@ -143,7 +144,7 @@ cargo test -- --ignored                     # 会读写真实钥匙串的测试�
   - `preview.rs` / `image_preview.rs`：预览对话框和可缩放的图片。
 - `editor/`：编辑器标签（`EditorPanel`），语言、缩进和状态栏文字是 `model.rs` 的纯函数。
 - `forward/`：端口转发的运行（`ForwardManager`、每条规则一个工作线程、SOCKS 解析）和界面。`credential/`：凭据的界面。
-- `monitor/`、`netstat/`、`processes/`、`services/`、`docker/`、`history/`、`snippets/`：右侧栏的七个工具。各自是「命令（`linux.rs` 等）+ 纯解析和模型（`model.rs`）+ 面板」，确认和通知在工作区。
+- `monitor/`、`netstat/`、`processes/`、`services/`、`docker/`、`history/`、`snippets/`：右侧栏的八个工具。各自是「命令（`linux.rs` 等）+ 纯解析和模型（`model.rs`）+ 面板」，确认和通知在工作区。
 - `secrets/`：`SecretStore`（钥匙串）、`SecretRef`（条目归属）、`TemporarySecretStore`（不保存的连接的密码只在内存）。
 - `settings/`：`AppSettings`、写 `settings.json` 的 `SettingsStore`、把设置落到窗口上的 `apply`、设置标签。
 - `cli/`：外部 CLI（`shellrs hosts/credentials/exec/upload/download/sync`，给 AI Agent 用）、套接字协议、应用里的服务端、主机和凭据改动的校验（`manage.rs`）、PATH 和 Agent skill 的安装。
@@ -209,7 +210,7 @@ cargo test -- --ignored                     # 会读写真实钥匙串的测试�
 | 传输队列 / 书签 | Transfers / Bookmarks |
 | 显示隐藏文件 | Show hidden files |
 | 废纸篓 | macOS 写 Trash，Windows 写 Recycle Bin |
-| 右侧栏七个工具 | Snippets / History / Docker / Services / Processes / Network / Monitor |
+| 右侧栏八个工具 | Snippets / History / Docker / Services / Processes / Network / Monitor |
 | 设置七类（外观、终端、关键字高亮、键盘快捷键、外部 CLI、应用、关于） | Appearance / Terminal / Highlighting / Keyboard shortcuts / External CLI / General / About |
 | 应用更新 / 稳定版 / 重启并安装 / 查看更新内容 | Updates / Stable / Restart to update / What’s new |
 | 连接 / 断开连接 / 重新连接 | Connect / Disconnect / Reconnect |
