@@ -1206,9 +1206,37 @@ async fn a_temporary_hosts_stopped_sidebar_becomes_a_resumable_closable_file_tab
     wait_for_queue_status(cx, handle, "已停止").await;
     // This time the sidebar is still visible when its last terminal closes.
     in_frame(cx, handle, |window, cx| {
+        // Dialog animations can leave no focused path. Closing must still
+        // reach the workspace, without clicking a terminal or file first.
+        window.blur(cx);
+        assert!(window.focused(cx).is_none());
+        // The sidebar and compose toolbar narrow the scrollable tab strip.
+        // Bring the close button out of its clipped edge before clicking it.
+        window.scroll(
+            ("terminal-tab", terminal.0),
+            gpui_kit::ScrollDelta::Pixels(point(px(-400.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let close = window.find(("close-terminal", terminal.0)).bounds();
+        let toolbar = window
+            .find(("toggle-terminal-compose", terminal.0))
+            .bounds();
+        assert!(
+            close.right() < toolbar.left(),
+            "close must be outside the toolbar"
+        );
+        assert!(window.focused(cx).is_none());
         window.click(("close-terminal", terminal.0), cx)
     });
-    wait_for_path(cx, handle, id, "/home/tester").await;
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        workspace.read(cx).active_tab() == Some(CenterTab::Explorer(id))
+            && workspace.read(cx).file_sidebar(host).is_none()
+            && window.try_find(("terminal-tab", terminal.0)).is_none()
+            && window.try_find(("explorer-tab", id.0)).is_some()
+    })
+    .await;
     in_frame(cx, handle, |window, cx| {
         assert_eq!(
             workspace.read(cx).active_tab(),
@@ -1226,12 +1254,6 @@ async fn a_temporary_hosts_stopped_sidebar_becomes_a_resumable_closable_file_tab
         window.click("cancel", cx);
     });
     in_frame(cx, handle, |window, cx| {
-        // Cancelling a GPUI dialog can leave focus empty. Queue controls use
-        // an explicit dispatch handle, but the tab's close action needs a
-        // focused path, so restore the file list before carrying on.
-        window
-            .within(("remote-pane", id.0))
-            .click("name:文件 甲.txt", cx);
         window.click("resume-transfer", cx);
     });
     wait_for_queue_status(cx, handle, "0%").await;
@@ -1242,6 +1264,8 @@ async fn a_temporary_hosts_stopped_sidebar_becomes_a_resumable_closable_file_tab
     in_frame(cx, handle, |window, cx| window.click("cancel-transfer", cx));
     wait_for_queue_status(cx, handle, "已停止").await;
     in_frame(cx, handle, |window, cx| {
+        window.blur(cx);
+        assert!(window.focused(cx).is_none());
         window.click(("close-explorer", id.0), cx)
     });
     in_frame(cx, handle, |window, cx| window.click("ok", cx));

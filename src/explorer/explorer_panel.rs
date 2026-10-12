@@ -989,6 +989,7 @@ impl Panel for ExplorerPanel {
         ClosableTabTitle::new(("explorer-tab", id.0), mark, self.tab_title(cx))
             .connection_state(self.connection_state())
             .closable(("close-explorer", id.0), Box::new(CloseExplorer(id)))
+            .close_dispatch(self.dispatch.clone())
             .context_menu(move |popup, _, cx| menu.build(popup, cx))
     }
     fn dropdown_menu(

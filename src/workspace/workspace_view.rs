@@ -478,6 +478,7 @@ impl Workspace {
             let (panel, subscription) = new_terminal_panel(
                 &store,
                 remote_terminal_provider.clone(),
+                focus_handle.clone(),
                 terminal_id,
                 id,
                 window,
@@ -1170,6 +1171,7 @@ impl Workspace {
         let (panel, subscription) = new_terminal_panel(
             &self.store,
             self.remote_terminal_provider.clone(),
+            self.focus_handle.clone(),
             terminal_id,
             host_id,
             window,
@@ -2390,6 +2392,7 @@ impl Workspace {
 fn new_terminal_panel(
     store: &Entity<HostStore>,
     remote_provider: SharedRemoteTerminalTransportProvider,
+    dispatch: FocusHandle,
     terminal_id: RemoteTerminalId,
     host_id: HostId,
     window: &mut Window,
@@ -2401,6 +2404,7 @@ fn new_terminal_panel(
             host_id,
             store.clone(),
             remote_provider,
+            dispatch,
             window,
             cx,
         )

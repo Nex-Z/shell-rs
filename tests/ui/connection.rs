@@ -1124,7 +1124,7 @@ async fn enter_retries_canceled_authentication_in_the_same_tab(cx: &mut TestAppC
     .await;
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.click("cancel", cx);
+        window.press("escape", cx);
     })
     .unwrap();
     cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
@@ -1160,7 +1160,7 @@ async fn enter_retries_canceled_authentication_in_the_same_tab(cx: &mut TestAppC
     });
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.click("cancel", cx);
+        window.press("escape", cx);
     })
     .unwrap();
     cx.run_until_parked();

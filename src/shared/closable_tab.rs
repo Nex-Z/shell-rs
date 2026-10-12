@@ -40,6 +40,7 @@ pub struct ClosableTabTitle {
     menu: Option<MenuBuilder>,
     modified: bool,
     connection_state: Option<ConnectionState>,
+    close_dispatch: Option<FocusHandle>,
 }
 
 impl ClosableTabTitle {
@@ -58,6 +59,7 @@ impl ClosableTabTitle {
             menu: None,
             modified: false,
             connection_state: None,
+            close_dispatch: None,
         }
     }
 
@@ -78,6 +80,12 @@ impl ClosableTabTitle {
     /// Show a close button that dispatches `action` on the focused path.
     pub fn closable(mut self, id: impl Into<ElementId>, action: Box<dyn Action>) -> Self {
         self.close = Some((id.into(), action));
+        self
+    }
+
+    /// Route close through a stable owner even while dialog focus is absent.
+    pub fn close_dispatch(mut self, dispatch: FocusHandle) -> Self {
+        self.close_dispatch = Some(dispatch);
         self
     }
 
@@ -157,7 +165,11 @@ impl RenderOnce for ClosableTabTitle {
                         .on_click(move |_, window, cx| {
                             // Closing must not also select or drag the tab.
                             cx.stop_propagation();
-                            window.dispatch_action(action.boxed_clone(), cx);
+                            if let Some(dispatch) = &self.close_dispatch {
+                                dispatch.dispatch_action(action.as_ref(), window, cx);
+                            } else {
+                                window.dispatch_action(action.boxed_clone(), cx);
+                            }
                         }),
                 )
             });
