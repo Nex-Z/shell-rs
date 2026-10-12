@@ -466,25 +466,28 @@ async fn a_cli_run_a_terminal_cannot_take_says_why(cx: &mut TestAppContext) {
     // Another run has the terminal: no ^C to end it.
     let web = host_id(&workspace, 1, cx);
     let (first, first_events) = TerminalRun::new("sleep 9".into());
+    let before = factory.writes.lock().unwrap().len();
     assert_eq!(start_run(&workspace, &web, &first, cx), Ok(()));
-    let before = factory.written_text().len();
     let (second, _) = TerminalRun::new("true".into());
     assert_eq!(
         start_run(&workspace, &web, &second, cx),
         Err(RunFailure::Busy(BusyReason::AnotherRun))
     );
-    assert_eq!(factory.written_text().len(), before);
-
     // A shell it cannot type into: only the probe was typed.
     assert_eq!(first_events.recv().unwrap(), RunEvent::Accepted);
     assert_eq!(
         first.drive(&first_events, QUICK, &mut |_| Ok(())),
         Err(RunFailure::UnsupportedShell("zsh".into()))
     );
-    assert_eq!(
-        factory.written_text()[before..].matches(" sh -c '").count(),
-        1
-    );
+    // The probe reply follows the writes in the fake transport's FIFO.
+    // Checking now includes the first run's legitimate Ctrl-C and still
+    // rejects any extra write from the refused second run.
+    let writes = factory.writes.lock().unwrap()[before..].to_vec();
+    assert_eq!(writes.len(), 2);
+    assert_eq!(writes[0].as_slice(), b"\x03");
+    let probe = std::str::from_utf8(&writes[1]).unwrap();
+    assert_eq!(probe.matches(" sh -c '").count(), 1);
+    assert!(probe.contains("6973;P;"));
 
     // The terminal disconnected.
     web_terminal(&workspace, cx).update(cx, |view, cx| view.stop("closed", cx));
