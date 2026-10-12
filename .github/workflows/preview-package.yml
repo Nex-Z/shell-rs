@@ -135,9 +135,14 @@ jobs:
 
         cargo test --locked --features preview --test ui a_preview_cannot_enable_updates_through_settings_or_manual_actions
         2>&1 | tee validation-logs/preview-updater.log'
+    - name: Windows host configuration and dialog tests
+      run: |
+        cargo test --locked --features preview --lib host:: 2>&1 | tee validation-logs/windows-host-config.log
+        cargo test --locked --features preview --lib bash_directory_tracking 2>&1 | tee validation-logs/windows-host-bash-config.log
+        cargo test --locked --features preview --test ui host_dialog:: 2>&1 | tee validation-logs/windows-host-dialog-ui.log
     - name: Windows preview terminal interaction tests
       run: |
-        cargo test --locked --features preview --lib compose_draft 2>&1 | tee validation-logs/windows-compose-encoding.log
+        cargo test --locked --features preview --lib compose_ 2>&1 | tee validation-logs/windows-compose-encoding.log
         cargo test --locked --features preview --test ui compose:: 2>&1 | tee validation-logs/windows-compose-ui.log
         cargo test --locked --features preview --test ui connection:: 2>&1 | tee validation-logs/windows-connection-ui.log
     - name: Windows preview file and monitor tests
@@ -158,7 +163,7 @@ jobs:
       shell: pwsh
       run: '$ErrorActionPreference = ''Stop''
 
-        $version = ''0.1.10-preview.1''
+        $version = ''0.1.10-preview.2''
 
         $actualVersion = & ./target/release/shellrs-cli.exe --version
 
@@ -212,7 +217,7 @@ jobs:
       shell: pwsh
       run: '$ErrorActionPreference = ''Stop''
 
-        $version = ''0.1.10-preview.1''
+        $version = ''0.1.10-preview.2''
 
         $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 
@@ -266,7 +271,7 @@ jobs:
         \ 'Preview unexpectedly registered a machine-wide installation' }\n$untracked = Join-Path $installDir 'user-preview-untracked.txt'\n\
         Set-Content $untracked 'keep-untracked-preview-file' -Encoding ascii\n$installedVersion = & (Join-Path $installDir\
         \ 'shellrs-cli.exe') --version\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\nif (($installedVersion\
-        \ -join \"`n\").Trim() -ne 'shellrs 0.1.10-preview.1') { throw 'Installed CLI version mismatch' }\n$uninstallLog\
+        \ -join \"`n\").Trim() -ne 'shellrs 0.1.10-preview.2') { throw 'Installed CLI version mismatch' }\n$uninstallLog\
         \ = Join-Path $env:GITHUB_WORKSPACE 'validation-logs/installer-smoke-uninstall.log'\n$uninstaller = Join-Path\
         \ $installDir 'unins000.exe'\n$process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',(\"\
         /LOG=`\"$uninstallLog`\"\") -Wait -PassThru\nif ($process.ExitCode -ne 0) { throw \"Preview uninstall exited\
@@ -283,7 +288,7 @@ jobs:
     - name: Upload verified preview package
       uses: actions/upload-artifact@v4
       with:
-        name: ShellRS-0.1.10-preview.1-windows-x86_64-${{ github.sha }}
+        name: ShellRS-0.1.10-preview.2-windows-x86_64-${{ github.sha }}
         path: 'dist/*.zip
 
           dist/*.zip.sha256

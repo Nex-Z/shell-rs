@@ -102,8 +102,9 @@ impl ClosableTabTitle {
 
 impl RenderOnce for ClosableTabTitle {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        // Reserve room outside the mark for the lower-right status dot.
-        // It must not cover the OS glyph or collide with the title text.
+        // The badge must not change the mark's layout box or baseline. Put
+        // its center at the circular mark's lower-right corner: the two
+        // circles remain separate without shifting the icon or title text.
         let leading = match self.connection_state {
             Some(state) => {
                 let color = match state {
@@ -114,8 +115,6 @@ impl RenderOnce for ClosableTabTitle {
                 let label = state.label();
                 div()
                     .relative()
-                    .pr_2()
-                    .pb_2()
                     .flex_shrink_0()
                     .child(self.leading)
                     .child(
@@ -125,8 +124,10 @@ impl RenderOnce for ClosableTabTitle {
                             .role(Role::Status)
                             .aria_label(label.clone())
                             .absolute()
-                            .right_0()
-                            .bottom_0()
+                            // Half the size_1p5 diameter, in the same rem
+                            // units, centers the dot on the mark's corner.
+                            .right(-rems(0.1875))
+                            .bottom(-rems(0.1875))
                             .size_1p5()
                             .flex_shrink_0()
                             .rounded_full()

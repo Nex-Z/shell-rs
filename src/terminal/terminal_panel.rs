@@ -21,8 +21,8 @@ use crate::shared::{ClosableTabTitle, HostMark, LatencyLabel, RenamableTab, clos
 use super::compose_pane::ComposePane;
 
 use super::{
-    RemoteTerminalId, SharedRemoteTerminalTransportProvider, TerminalEvent, TerminalLifecycle,
-    TerminalMenuItems, TerminalNotice, TerminalStatus, TerminalView,
+    RemoteTerminalId, ReportedDirectory, SharedRemoteTerminalTransportProvider, TerminalEvent,
+    TerminalLifecycle, TerminalMenuItems, TerminalNotice, TerminalStatus, TerminalView,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +34,7 @@ pub enum TerminalPanelEvent {
     Connected(RemoteTerminalId, HostId),
     PromptRequested(RemoteTerminalId, HostId, ConnectionPrompt),
     HostOsDetected(HostId, HostOs),
+    DirectoryChanged(RemoteTerminalId, HostId, Option<ReportedDirectory>),
     Notice(RemoteTerminalId, TerminalNotice),
 }
 
@@ -110,6 +111,13 @@ impl TerminalPanel {
                     TerminalEvent::HostOsDetected(os) => {
                         cx.emit(TerminalPanelEvent::HostOsDetected(this.host_id, *os));
                     }
+                    TerminalEvent::DirectoryChanged(directory) => {
+                        cx.emit(TerminalPanelEvent::DirectoryChanged(
+                            this.id,
+                            this.host_id,
+                            directory.clone(),
+                        ));
+                    }
                     TerminalEvent::Notice(notice) => {
                         cx.emit(TerminalPanelEvent::Notice(this.id, notice.clone()));
                     }
@@ -146,11 +154,15 @@ impl TerminalPanel {
         cx.notify();
     }
 
-    pub(crate) fn paste_draft(&self, cx: &mut App) -> Result<(), SharedString> {
+    pub(crate) fn submit_draft(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SharedString> {
         if self.compose_visible
             && let Some(compose) = &self.compose
         {
-            compose.update(cx, |compose, cx| compose.paste(cx))?;
+            compose.update(cx, |compose, cx| compose.submit(window, cx))?;
         }
         Ok(())
     }
@@ -161,6 +173,19 @@ impl TerminalPanel {
 
     pub fn host_id(&self) -> HostId {
         self.host_id
+    }
+
+    /// The original terminal's metadata, never the host shared by all tabs.
+    pub fn directory_revision(&self, cx: &App) -> u64 {
+        self.terminal.read(cx).directory_revision(cx)
+    }
+
+    pub fn reported_directory(&self, cx: &App) -> Option<ReportedDirectory> {
+        self.terminal.read(cx).reported_directory(cx)
+    }
+
+    pub fn connection_generation(&self, cx: &App) -> u64 {
+        self.terminal.read(cx).generation(cx)
     }
 
     pub fn tab_group(&self) -> Option<WeakEntity<TabGroup>> {
@@ -476,7 +501,7 @@ impl Render for TerminalPanel {
                 .child(
                     resizable_panel()
                         .size(px(200.))
-                        .size_range(px(180.)..px(480.))
+                        .size_range(px(80.)..px(480.))
                         .visible(self.compose_visible)
                         .children(self.compose.clone()),
                 ),

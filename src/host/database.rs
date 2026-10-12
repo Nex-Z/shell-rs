@@ -37,8 +37,8 @@ fn from_sql(id: i64) -> u64 {
 ///
 /// 13 is the schema as it was rebuilt before the first release. Versions up
 /// to 12 were development builds, and their files are refused. 14 adds the
-/// command snippets.
-const SCHEMA_VERSION: i64 = 14;
+/// command snippets. 15 adds opt-in Bash directory tracking.
+const SCHEMA_VERSION: i64 = 15;
 
 /// The whole schema, as a new database gets it.
 ///
@@ -117,6 +117,7 @@ CREATE TABLE hosts (
     notes             TEXT NOT NULL DEFAULT '',
     os                TEXT,
     last_connected_at INTEGER,
+    bash_directory_tracking INTEGER NOT NULL DEFAULT 0 CHECK (bash_directory_tracking IN (0, 1)),
     CHECK ((auth = 'credential') = (credential_id IS NOT NULL)),
     CHECK ((auth = 'credential') = (username IS NULL)),
     CHECK ((route = 'proxy') = (proxy_kind IS NOT NULL)),
@@ -192,7 +193,7 @@ enum Step {
 ///
 /// A step is history: it says what that version's change was, and stays as
 /// written when `SCHEMA` changes again.
-const STEPS: [(i64, Step); 1] = [(
+const STEPS: [(i64, Step); 2] = [(
     13,
     // The command snippets.
     Step::Sql(
@@ -217,7 +218,10 @@ CREATE INDEX snippets_scope_host_id ON snippets(scope_host_id);
 PRAGMA user_version = 14;
 COMMIT;",
     ),
-)];
+), (14, Step::Sql("BEGIN;
+ALTER TABLE hosts ADD COLUMN bash_directory_tracking INTEGER NOT NULL DEFAULT 0 CHECK (bash_directory_tracking IN (0, 1));
+PRAGMA user_version = 15;
+COMMIT;"))];
 
 /// Everything one launch reads back from disk.
 pub struct StoredData {
@@ -290,7 +294,7 @@ impl HostDatabase {
             .prepare(
                 "SELECT id, public_id, group_id, sort_order, name, address, port, auth, username, \
                  credential_id, route, proxy_kind, proxy_host, proxy_port, proxy_username, \
-                 notes, os FROM hosts ORDER BY id",
+                 notes, os, bash_directory_tracking FROM hosts ORDER BY id",
             )?
             .query_map([], |row| {
                 let id: i64 = row.get(0)?;
@@ -319,7 +323,8 @@ impl HostDatabase {
                         AuthKind::from_stored(&auth),
                         group.map(|id| GroupId(from_sql(id))),
                     )
-                    .with_notes(notes),
+                    .with_notes(notes)
+                    .with_bash_directory_tracking(row.get(17)?),
                 );
                 host.public_id = PublicId::from_stored(public_id.unwrap_or_default());
                 host.sort_order = row.get(3)?;
@@ -579,8 +584,8 @@ impl HostDatabase {
         transaction.execute(
             "INSERT INTO hosts (id, public_id, group_id, sort_order, name, address, port, auth, \
              username, credential_id, route, proxy_kind, proxy_host, proxy_port, \
-             proxy_username, notes, os) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             proxy_username, notes, os, bash_directory_tracking) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 to_sql(host.id.0),
                 host.public_id.as_str(),
@@ -599,6 +604,7 @@ impl HostDatabase {
                 row.proxy_username,
                 host.notes.as_ref(),
                 host.os.map(HostOs::as_str),
+                host.bash_directory_tracking,
             ],
         )?;
         write_jumps(&transaction, host)?;
@@ -616,7 +622,7 @@ impl HostDatabase {
             "UPDATE hosts SET group_id = ?2, sort_order = ?3, name = ?4, address = ?5, \
              port = ?6, auth = ?7, username = ?8, credential_id = ?9, route = ?10, \
              proxy_kind = ?11, proxy_host = ?12, proxy_port = ?13, proxy_username = ?14, \
-             notes = ?15 WHERE id = ?1",
+             notes = ?15, bash_directory_tracking = ?16 WHERE id = ?1",
             params![
                 to_sql(host.id.0),
                 host.group.map(|group| to_sql(group.0)),
@@ -633,6 +639,7 @@ impl HostDatabase {
                 row.proxy_port,
                 row.proxy_username,
                 host.notes.as_ref(),
+                host.bash_directory_tracking,
             ],
         )?;
         write_jumps(&transaction, host)?;
@@ -1431,6 +1438,43 @@ CREATE INDEX forwards_host_id ON forwards(host_id);";
             .unwrap();
         assert_eq!(version, 12);
         assert!(!dir.path().join("shellrs.db.v12.bak").exists());
+    }
+
+    #[test]
+    fn bash_directory_tracking_migrates_off_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shellrs.db");
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(SCHEMA_13).unwrap();
+            if let Step::Sql(sql) = STEPS[0].1 {
+                old.execute_batch(sql).unwrap();
+            }
+            old.execute("INSERT INTO hosts (id, name, address, port, auth, username) VALUES (1, 'old', 'host', 22, 'password', 'root')", []).unwrap();
+        }
+        let db = HostDatabase::open(&path).unwrap();
+        assert!(dir.path().join("shellrs.db.v14.bak").exists());
+        let mut old = db.load().unwrap().hosts.remove(0);
+        assert!(!old.bash_directory_tracking);
+        old.bash_directory_tracking = true;
+        db.update_host(&old).unwrap();
+        let mut new = host(2, "new", None);
+        new.bash_directory_tracking = true;
+        db.insert_host(&new).unwrap();
+        drop(db);
+        let db = HostDatabase::open(&path).unwrap();
+        assert!(
+            db.load()
+                .unwrap()
+                .hosts
+                .iter()
+                .all(|host| host.bash_directory_tracking)
+        );
+        let fresh = HostDatabase::in_memory().unwrap();
+        assert_eq!(schema_of(&db.connection), schema_of(&fresh.connection));
+        old.bash_directory_tracking = false;
+        db.update_host(&old).unwrap();
+        assert!(!db.load().unwrap().hosts[0].bash_directory_tracking);
     }
 
     #[test]

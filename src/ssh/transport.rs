@@ -53,6 +53,8 @@ impl RemoteTerminalTransportProvider for SshTerminalTransportProvider {
         Arc::new(SshTerminalTransport {
             config: SshConnectionConfig::from(login),
             connector: self.connector.clone(),
+            bash_directory_tracking: login.bash_directory_tracking && !login.shell_only,
+            directory_authority: login.host.clone(),
         })
     }
 }
@@ -63,6 +65,8 @@ impl RemoteTerminalTransportProvider for SshTerminalTransportProvider {
 struct SshTerminalTransport {
     config: SshConnectionConfig,
     connector: SshConnector,
+    bash_directory_tracking: bool,
+    directory_authority: String,
 }
 
 impl TerminalTransportFactory for SshTerminalTransport {
@@ -174,11 +178,21 @@ impl SshTerminalTransport {
             ) => result.map_err(|_| anyhow!(t!("ssh.terminal.pty_refused")))?,
             _ = shutdown.changed() => bail!(t!("ssh.connect.cancelled")),
         }
-        tokio::select! {
-            result = channel.request_shell(true) => {
-                result.map_err(|_| anyhow!(t!("ssh.terminal.shell_refused")))?
+        if self.bash_directory_tracking {
+            let command = super::bash_integration::command(&self.directory_authority);
+            tokio::select! {
+                result = channel.exec(true, command) => {
+                    result.map_err(|_| anyhow!(t!("ssh.terminal.shell_refused")))?
+                }
+                _ = shutdown.changed() => bail!(t!("ssh.connect.cancelled")),
             }
-            _ = shutdown.changed() => bail!(t!("ssh.connect.cancelled")),
+        } else {
+            tokio::select! {
+                result = channel.request_shell(true) => {
+                    result.map_err(|_| anyhow!(t!("ssh.terminal.shell_refused")))?
+                }
+                _ = shutdown.changed() => bail!(t!("ssh.connect.cancelled")),
+            }
         }
         events
             .send(TerminalTransportEvent::Started)

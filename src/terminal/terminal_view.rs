@@ -33,9 +33,9 @@ use super::mouse::{self, MouseReport, ReportButton, ReportKind};
 use super::scrollbar::ScrollbackHandle;
 use super::search::SearchMark;
 use super::{
-    RightClick, SearchDirection, SharedTerminalTransportFactory, TerminalColors, TerminalEngine,
-    TerminalEvent, TerminalFont, TerminalInteraction, TerminalLifecycle, TerminalSize,
-    TerminalSnapshot, TerminalStatus, TerminalTheme,
+    ReportedDirectory, RightClick, SearchDirection, SharedTerminalTransportFactory, TerminalColors,
+    TerminalEngine, TerminalEvent, TerminalFont, TerminalInteraction, TerminalLifecycle,
+    TerminalSize, TerminalSnapshot, TerminalStatus, TerminalTheme,
 };
 
 pub const TERMINAL_KEY_CONTEXT: &str = "Terminal";
@@ -418,6 +418,14 @@ impl TerminalView {
         self.engine.read(cx).generation()
     }
 
+    pub fn directory_revision(&self, cx: &App) -> u64 {
+        self.engine.read(cx).directory_revision()
+    }
+
+    pub fn reported_directory(&self, cx: &App) -> Option<ReportedDirectory> {
+        self.engine.read(cx).reported_directory().cloned()
+    }
+
     /// Run `command` beside the shell, on this terminal's own connection;
     /// see [`super::ExecRequest`]. `None` while the shell is not running.
     pub fn exec(
@@ -494,13 +502,13 @@ impl TerminalView {
         Ok(())
     }
 
-    /// Paste the tab’s compose draft without executing it.
-    pub(super) fn paste_draft(
+    /// Submit the tab’s compose draft and press Enter once.
+    pub(super) fn submit_draft(
         &mut self,
         draft: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), SharedString> {
-        self.engine.read(cx).paste_draft(draft)?;
+        self.engine.read(cx).submit_draft(draft)?;
         self.selecting = false;
         self.scroll_accumulator.reset();
         self.cursor_visible = true;

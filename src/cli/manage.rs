@@ -121,6 +121,7 @@ pub fn host_details(host: &Host, store: &HostStore) -> HostDetails {
         password_saved: None,
         route,
         notes: host.notes.to_string(),
+        bash_directory_tracking: host.bash_directory_tracking,
         os: host.os.map(|os| os.as_str().to_string()),
         temporary: store.is_temporary(host.id),
     }
@@ -343,6 +344,9 @@ pub fn plan_host(
     }
     if let Some(port) = fields.port {
         draft.port = port;
+    }
+    if let Some(enabled) = fields.bash_directory_tracking {
+        draft.bash_directory_tracking = enabled;
     }
     if let Some(notes) = fields.notes {
         draft.notes = notes.into();
@@ -692,8 +696,8 @@ mod tests {
     use crate::secrets::SecretRef;
 
     use super::super::protocol::{
-        AuthChoice, CliError, CredentialFields, CredentialKindChoice, ErrorCode, HostFields,
-        RouteFields, Secret,
+        AuthChoice, CliError, CredentialFields, CredentialKindChoice, ErrorCode, HostDetails,
+        HostFields, RouteFields, Secret,
     };
     use super::{
         GroupPlan, SecretChange, credential_fields, host_details, host_fields, plan_credential,
@@ -737,6 +741,48 @@ mod tests {
 
     fn bad(message: &str) -> (ErrorCode, String) {
         (ErrorCode::BadRequest, message.to_string())
+    }
+
+    #[test]
+    fn bash_directory_tracking_json_is_optional_and_round_trips() {
+        let (mut store, _, _) = store();
+        let old = plan_host(
+            fields(serde_json::json!({"host": "old.example"})),
+            None,
+            &store,
+        )
+        .unwrap();
+        assert!(!old.draft.bash_directory_tracking);
+        let enabled = plan_host(
+            fields(serde_json::json!({"host": "new.example", "bash_directory_tracking": true})),
+            None,
+            &store,
+        )
+        .unwrap();
+        let id = store.insert_unnotified(enabled.draft);
+        let details = host_details(store.host(id).unwrap(), &store);
+        let exported = serde_json::to_value(&details).unwrap();
+        let imported = plan_host(host_fields(exported.clone()).unwrap(), None, &store).unwrap();
+        assert!(imported.draft.bash_directory_tracking);
+        let unchanged = plan_host(HostFields::default(), Some(id), &store).unwrap();
+        assert!(unchanged.draft.bash_directory_tracking);
+        let disabled = plan_host(
+            fields(serde_json::json!({"bash_directory_tracking": false})),
+            Some(id),
+            &store,
+        )
+        .unwrap();
+        assert!(!disabled.draft.bash_directory_tracking);
+        let mut legacy = exported;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("bash_directory_tracking");
+        assert!(
+            !serde_json::from_value::<HostDetails>(legacy)
+                .unwrap()
+                .bash_directory_tracking
+        );
     }
 
     #[test]

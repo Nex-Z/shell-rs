@@ -214,8 +214,8 @@ id_actions! {
     RenameTerminal(RemoteTerminalId);
     /// Show or hide one remote terminal tab’s memory-only compose pane.
     ToggleTerminalCompose(RemoteTerminalId);
-    /// Paste that tab’s draft, without Enter or replacing its input line.
-    PasteTerminalDraft(RemoteTerminalId);
+    /// Submit that tab’s queued draft once, followed by Enter.
+    SubmitTerminalDraft(RemoteTerminalId);
 
     /// Close a local terminal tab and terminate its child process.
     CloseLocalTerminal(LocalTerminalId);

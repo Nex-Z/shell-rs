@@ -414,6 +414,8 @@ pub struct Host {
     pub group: Option<GroupId>,
     /// Whatever the user wants to remember about it; empty for none.
     pub notes: SharedString,
+    /// Opt-in Bash directory reporting, applied when the next terminal starts.
+    pub bash_directory_tracking: bool,
     /// Order among hosts in the same group.
     pub sort_order: i64,
     pub state: ConnectionState,
@@ -439,6 +441,7 @@ impl Host {
             route: draft.route,
             group: draft.group,
             notes: draft.notes,
+            bash_directory_tracking: draft.bash_directory_tracking,
             sort_order: 0,
             state: ConnectionState::Disconnected,
             os: None,
@@ -475,6 +478,7 @@ impl Host {
             route: self.route.clone(),
             group: self.group,
             notes: self.notes.clone(),
+            bash_directory_tracking: self.bash_directory_tracking,
         }
     }
 }
@@ -537,6 +541,8 @@ pub struct HostDraft {
     pub route: Route,
     pub group: Option<GroupId>,
     pub notes: SharedString,
+    /// Opt-in Bash directory reporting, applied when the next terminal starts.
+    pub bash_directory_tracking: bool,
 }
 
 impl HostDraft {
@@ -558,6 +564,7 @@ impl HostDraft {
             route: Route::Direct,
             group,
             notes: SharedString::default(),
+            bash_directory_tracking: false,
         }
     }
 
@@ -571,6 +578,11 @@ impl HostDraft {
     /// Reach the host some other way than directly.
     pub fn with_route(mut self, route: Route) -> Self {
         self.route = route;
+        self
+    }
+
+    pub fn with_bash_directory_tracking(mut self, enabled: bool) -> Self {
+        self.bash_directory_tracking = enabled;
         self
     }
 

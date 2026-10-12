@@ -24,6 +24,7 @@ use crate::connection::{ConnectionPrompt, ConnectionPromptReply, Latency};
 use crate::host::HostOs;
 use crate::i18n::t;
 
+use super::directory::{DirectoryScanner, ReportedDirectory};
 use super::highlight::{
     HighlightColor, KeywordHit, LineWatcher, SharedHighlights, TerminalHighlights,
     advance_watching, current,
@@ -94,6 +95,8 @@ pub struct TerminalEngine {
     title: Option<String>,
     /// The connection's latest round trip, while one is running.
     latency: Option<Latency>,
+    reported_directory: Option<ReportedDirectory>,
+    directory_revision: u64,
     /// The open find, if any. Rendering reads it through `&self` and still
     /// has to advance the search engine's cache, hence the `RefCell`.
     search: RefCell<Option<TerminalSearch>>,
@@ -139,6 +142,8 @@ impl TerminalEngine {
             lifecycle: TerminalLifecycle::Starting,
             title: None,
             latency: None,
+            reported_directory: None,
+            directory_revision: 0,
             search: RefCell::new(None),
             url_search: RefCell::new(url_search()),
             highlights,
@@ -206,11 +211,22 @@ impl TerminalEngine {
                 self.append_reconnect_hint();
                 self.lifecycle = TerminalLifecycle::Exited { code, signal };
                 self.latency = None;
+                return self.set_reported_directory(None);
             }
             TerminalUiEventKind::Failed(error) => {
                 self.append_reconnect_hint();
                 self.lifecycle = TerminalLifecycle::Failed(error);
                 self.latency = None;
+                return self.set_reported_directory(None);
+            }
+            TerminalUiEventKind::Directory(directory) => {
+                if !matches!(
+                    self.lifecycle,
+                    TerminalLifecycle::Starting | TerminalLifecycle::Running
+                ) {
+                    return None;
+                }
+                return self.set_reported_directory(Some(directory));
             }
             TerminalUiEventKind::Latency(latency) => self.latency = Some(latency),
             TerminalUiEventKind::Prompt(prompt) => {
@@ -256,6 +272,7 @@ impl TerminalEngine {
 
     pub fn restart(&mut self, cx: &mut gpui_kit::Context<Self>) {
         self.generation = self.generation.saturating_add(1);
+        self.clear_reported_directory(cx);
         self.runtime.shutdown();
         self.lifecycle = TerminalLifecycle::Starting;
         self.title = None;
@@ -287,6 +304,7 @@ impl TerminalEngine {
 
     pub fn shutdown(&mut self, cx: &mut gpui_kit::Context<Self>) {
         self.generation = self.generation.saturating_add(1);
+        self.clear_reported_directory(cx);
         self.lifecycle = TerminalLifecycle::Closing;
         self.runtime.shutdown();
         cx.notify();
@@ -294,6 +312,7 @@ impl TerminalEngine {
 
     pub fn stop(&mut self, message: &str, cx: &mut gpui_kit::Context<Self>) {
         self.generation = self.generation.saturating_add(1);
+        self.clear_reported_directory(cx);
         self.runtime.shutdown();
         append_message(&self.runtime.term, message);
         self.append_reconnect_hint();
@@ -354,9 +373,9 @@ impl TerminalEngine {
         Ok(())
     }
 
-    /// Paste a compose draft without submitting it or editing the existing
-    /// terminal line. Reject unsafe controls and non-bracketed multiline input.
-    pub(super) fn paste_draft(&self, draft: &str) -> Result<(), SharedString> {
+    /// Submit a compose draft with exactly one final Enter. Reject unsafe
+    /// controls and non-bracketed multiline input before sending any bytes.
+    pub(super) fn submit_draft(&self, draft: &str) -> Result<(), SharedString> {
         if self.lifecycle != TerminalLifecycle::Running {
             return Err(t!("terminal.command.not_connected"));
         }
@@ -508,6 +527,34 @@ impl TerminalEngine {
 
     pub fn latency(&self) -> Option<Latency> {
         self.latency
+    }
+
+    /// The last valid OSC 7 report of this connection. This is untrusted
+    /// terminal metadata; using it still requires matching its authority.
+    pub fn reported_directory(&self) -> Option<&ReportedDirectory> {
+        self.reported_directory.as_ref()
+    }
+
+    pub fn directory_revision(&self) -> u64 {
+        self.directory_revision
+    }
+
+    fn set_reported_directory(
+        &mut self,
+        directory: Option<ReportedDirectory>,
+    ) -> Option<TerminalEvent> {
+        if self.reported_directory == directory {
+            return None;
+        }
+        self.reported_directory = directory.clone();
+        self.directory_revision = self.directory_revision.saturating_add(1);
+        Some(TerminalEvent::DirectoryChanged(directory))
+    }
+
+    fn clear_reported_directory(&mut self, cx: &mut gpui_kit::Context<Self>) {
+        if let Some(event) = self.set_reported_directory(None) {
+            cx.emit(event);
+        }
     }
 
     /// Counts the transports started: every reconnect is a new connection,
@@ -724,6 +771,8 @@ pub enum TerminalEvent {
     Started,
     PromptRequested(ConnectionPrompt),
     HostOsDetected(HostOs),
+    /// The shell reported a directory, or its connection no longer has one.
+    DirectoryChanged(Option<ReportedDirectory>),
     /// Something to show the user while they look elsewhere.
     Notice(TerminalNotice),
 }
@@ -770,6 +819,7 @@ impl TerminalRuntime {
                 let mut processor: Processor = Processor::new();
                 // Alacritty drops the notifications programs ask for.
                 let mut notices = NoticeScanner::default();
+                let mut directories = DirectoryScanner::default();
                 let mut watcher = LineWatcher::new(current(&highlights));
                 loop {
                     // Output inside a synchronized update is held back until
@@ -812,6 +862,9 @@ impl TerminalRuntime {
                             }
                             for notice in notices.scan(&bytes) {
                                 parser_proxy.send(TerminalUiEventKind::Notice(notice));
+                            }
+                            for directory in directories.scan(&bytes) {
+                                parser_proxy.send(TerminalUiEventKind::Directory(directory));
                             }
                             feed_run(&parser_run, &bytes);
                             parser_proxy.wakeup();
@@ -1025,6 +1078,7 @@ enum TerminalUiEventKind {
     Failed(String),
     Prompt(ConnectionPrompt),
     HostOs(HostOs),
+    Directory(ReportedDirectory),
     Latency(Latency),
     ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Send + Sync>),
     /// A program's copy, by OSC 52.
@@ -1131,8 +1185,8 @@ fn encode_paste(text: &str, mode: TermMode) -> Vec<u8> {
     }
 }
 
-/// Compose has deliberately stricter semantics than clipboard paste: no
-/// Enter, no line replacement, no escape/control injection, and no fallback
+/// Compose submits with one explicit Enter: no line replacement, no
+/// escape/control injection, and no fallback
 /// that could execute the first line when bracketed paste is unavailable.
 fn encode_draft(draft: &str, mode: TermMode) -> Result<Vec<u8>, SharedString> {
     let normalized = draft.replace("\r\n", "\n").replace('\r', "\n");
@@ -1148,7 +1202,7 @@ fn encode_draft(draft: &str, mode: TermMode) -> Result<Vec<u8>, SharedString> {
     if !mode.contains(TermMode::BRACKETED_PASTE) && normalized.contains(['\n', '\t']) {
         return Err(t!("terminal.compose.multiline"));
     }
-    encode_command(&normalized, false, false, mode)
+    encode_command(&normalized, true, false, mode)
 }
 
 /// What `TerminalEngine::enter_command` types: with `replace` Ctrl-E and
@@ -1724,18 +1778,18 @@ mod tests {
     }
 
     #[test]
-    fn compose_draft_never_submits_or_replaces_the_terminal_line() {
+    fn compose_draft_submits_once_without_replacing_the_terminal_line() {
         assert_eq!(
             encode_draft("echo 中文", TermMode::default()).unwrap(),
-            "echo 中文".as_bytes()
+            "echo 中文\r".as_bytes()
         );
         assert_eq!(
             encode_draft("echo one\r\necho two\r", TermMode::BRACKETED_PASTE).unwrap(),
-            b"\x1b[200~echo one\necho two\n\x1b[201~"
+            b"\x1b[200~echo one\necho two\n\x1b[201~\r"
         );
         assert_eq!(
             encode_draft("\techo one", TermMode::BRACKETED_PASTE).unwrap(),
-            b"\x1b[200~\techo one\x1b[201~"
+            b"\x1b[200~\techo one\x1b[201~\r"
         );
     }
 
@@ -1795,6 +1849,14 @@ mod tests {
     /// when nothing is typed.
     struct ScriptedTransport(Vec<TerminalTransportEvent>);
 
+    struct QuietFactory;
+
+    impl super::super::TerminalTransportFactory for QuietFactory {
+        fn create(&self) -> Box<dyn super::super::TerminalTransport> {
+            Box::new(ScriptedTransport(Vec::new()))
+        }
+    }
+
     impl super::super::TerminalTransport for ScriptedTransport {
         fn run(
             self: Box<Self>,
@@ -1812,6 +1874,180 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[gpui_kit::test]
+    fn directory_reports_are_deduplicated_and_discarded_on_reconnect(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::AppContext as _;
+        use std::rc::Rc;
+
+        let engine = cx.new(|cx| TerminalEngine::new(Arc::new(QuietFactory), cx));
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let changes = changes.clone();
+            cx.subscribe(&engine, move |_, event: &TerminalEvent, _| {
+                if let TerminalEvent::DirectoryChanged(directory) = event {
+                    changes.borrow_mut().push(directory.clone());
+                }
+            })
+        });
+        let directory = ReportedDirectory::parse(b"file://host/home/me").unwrap();
+        engine.update(cx, |engine, cx| {
+            let event = engine.handle_event(
+                TerminalUiEvent {
+                    generation: 1,
+                    kind: TerminalUiEventKind::Directory(directory.clone()),
+                },
+                cx,
+            );
+            assert!(matches!(
+                event,
+                Some(TerminalEvent::DirectoryChanged(Some(_)))
+            ));
+            assert_eq!(engine.reported_directory(), Some(&directory));
+            assert!(
+                engine
+                    .handle_event(
+                        TerminalUiEvent {
+                            generation: 1,
+                            kind: TerminalUiEventKind::Directory(directory.clone()),
+                        },
+                        cx,
+                    )
+                    .is_none()
+            );
+
+            let revision = engine.directory_revision();
+            assert_eq!(revision, 1, "identical prompt reports do not advance");
+            engine.set_reported_directory(Some(
+                ReportedDirectory::parse(b"file://host/other").unwrap(),
+            ));
+            engine.set_reported_directory(Some(directory.clone()));
+            assert_eq!(
+                engine.directory_revision(),
+                revision + 2,
+                "A-B-A remains a new report even when observers coalesce"
+            );
+            engine.restart(cx);
+            assert_eq!(engine.generation(), 2);
+            assert!(engine.reported_directory().is_none());
+            for kind in [
+                TerminalUiEventKind::Directory(directory.clone()),
+                TerminalUiEventKind::Exited {
+                    code: 0,
+                    signal: None,
+                },
+            ] {
+                assert!(
+                    engine
+                        .handle_event(
+                            TerminalUiEvent {
+                                generation: 1,
+                                kind
+                            },
+                            cx
+                        )
+                        .is_none()
+                );
+            }
+            assert!(engine.reported_directory().is_none());
+            assert!(matches!(engine.lifecycle(), TerminalLifecycle::Starting));
+            assert!(matches!(
+                engine.handle_event(
+                    TerminalUiEvent {
+                        generation: 2,
+                        kind: TerminalUiEventKind::Directory(directory.clone()),
+                    },
+                    cx,
+                ),
+                Some(TerminalEvent::DirectoryChanged(Some(_)))
+            ));
+            engine.shutdown(cx);
+            assert!(engine.reported_directory().is_none());
+        });
+        cx.run_until_parked();
+        // Restart and shutdown each clear an existing report exactly once.
+        assert_eq!(*changes.borrow(), [None, None]);
+    }
+
+    #[gpui_kit::test]
+    fn ending_a_connection_clears_directory_and_cannot_restore_it(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::AppContext as _;
+
+        let engine = cx.new(|cx| TerminalEngine::new(Arc::new(QuietFactory), cx));
+        let directory = ReportedDirectory::parse(b"file://host/tmp").unwrap();
+        engine.update(cx, |engine, cx| {
+            for ending in [
+                TerminalUiEventKind::Exited {
+                    code: 0,
+                    signal: None,
+                },
+                TerminalUiEventKind::Failed("connection lost".into()),
+            ] {
+                engine.lifecycle = TerminalLifecycle::Running;
+                let _ = engine.set_reported_directory(Some(directory.clone()));
+                assert!(matches!(
+                    engine.handle_event(
+                        TerminalUiEvent {
+                            generation: engine.generation(),
+                            kind: ending
+                        },
+                        cx,
+                    ),
+                    Some(TerminalEvent::DirectoryChanged(None))
+                ));
+                assert!(engine.reported_directory().is_none());
+                assert!(
+                    engine
+                        .handle_event(
+                            TerminalUiEvent {
+                                generation: engine.generation(),
+                                kind: TerminalUiEventKind::Directory(directory.clone()),
+                            },
+                            cx,
+                        )
+                        .is_none()
+                );
+            }
+            engine.lifecycle = TerminalLifecycle::Running;
+            let _ = engine.set_reported_directory(Some(directory));
+            engine.stop("disconnected", cx);
+            assert!(engine.reported_directory().is_none());
+        });
+    }
+
+    #[test]
+    fn directory_parser_events_keep_the_transport_generation() {
+        let (sender, receiver) = mpsc::channel();
+        let runtime = TerminalRuntime::start(
+            42,
+            TerminalSize::DEFAULT,
+            Box::new(ScriptedTransport(vec![
+                TerminalTransportEvent::Started,
+                TerminalTransportEvent::Output(b"\x1b]7;file://host/a%".to_vec()),
+                TerminalTransportEvent::Output(b"20b\x1b".to_vec()),
+                TerminalTransportEvent::Output(b"\\".to_vec()),
+            ])),
+            sender,
+            Arc::default(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let event = receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("the parser should report its completed OSC 7");
+            if let TerminalUiEventKind::Directory(directory) = event.kind {
+                assert_eq!(event.generation, 42);
+                assert_eq!(directory.authority(), "host");
+                assert_eq!(directory.path(), "/a b");
+                break;
+            }
+        }
+        runtime.shutdown();
     }
 
     /// A terminal whose transport plays `script`.

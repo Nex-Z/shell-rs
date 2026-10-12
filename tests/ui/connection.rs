@@ -470,15 +470,13 @@ async fn disconnecting_one_tab_leaves_the_other_tabs_of_its_host(cx: &mut TestAp
             let mark = tab.find(("terminal-tab-os", id)).bounds();
             let dot = tab.find("connection-status").bounds();
             let title = window.find(("terminal-tab", id)).bounds();
-            assert!(
-                dot.left() > mark.right(),
-                "status must sit outside the icon"
-            );
-            assert!(dot.top() > mark.bottom(), "status must not cover the icon");
-            assert!(dot.right() < window.find(("close-terminal", id)).bounds().left());
-            assert!(dot.bottom() <= title.bottom(), "status must not be clipped");
-            assert!(mark.top() >= title.top());
-            assert!(title.size.height <= px(30.), "keep the dock's title height");
+            let close = window.find(("close-terminal", id)).bounds();
+            assert_eq!(mark.center().y, close.center().y);
+            let centers = dot.center() - mark.center();
+            let distance = (f32::from(centers.x).powi(2) + f32::from(centers.y).powi(2)).sqrt();
+            assert!(distance > f32::from(mark.size.width + dot.size.width) / 2.);
+            assert!(dot.right() < close.left());
+            assert_eq!(mark.center().y, title.center().y);
             assert_eq!(
                 window
                     .within(("terminal-tab", id))
@@ -1164,4 +1162,113 @@ async fn enter_retries_canceled_authentication_in_the_same_tab(cx: &mut TestAppC
     })
     .unwrap();
     cx.run_until_parked();
+}
+
+/// Exercise the production title in the same TabBar used by the dock, with
+/// and without its badge. Geometry must be invariant under state/selection.
+struct TabStatusLayout {
+    state: ConnectionState,
+    selected: usize,
+    rem: f32,
+}
+
+impl gpui_kit::Render for TabStatusLayout {
+    fn render(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::component::{
+            Sizable as _,
+            tab::{Tab, TabBar},
+        };
+        use gpui_kit::{InteractiveElement as _, ParentElement as _};
+        use shellrs::shared::{ClosableTabTitle, HostMark};
+        window.set_rem_size(px(self.rem));
+        let title = |id| {
+            ClosableTabTitle::new(
+                ("layout-title", id),
+                HostMark::new(("layout-mark", id), "host", Some(HostOs::Ubuntu)).small(),
+                "host",
+            )
+            .closable(("layout-close", id), Box::new(shellrs::app::CloseActiveTab))
+        };
+        TabBar::new("layout-tabs")
+            .selected_index(self.selected)
+            .child(
+                Tab::new()
+                    .debug_selector(|| "plain-tab".into())
+                    .child(title(0u64)),
+            )
+            .child(
+                Tab::new()
+                    .debug_selector(|| "status-tab".into())
+                    .child(title(1u64).connection_state(self.state)),
+            )
+    }
+}
+
+#[gpui_kit::test]
+fn connection_badge_preserves_icon_alignment_and_fits_the_tab(cx: &mut TestAppContext) {
+    init_app(cx);
+    let (view, cx) = cx.add_window_view(|_, _| TabStatusLayout {
+        state: ConnectionState::Connected,
+        selected: 0,
+        rem: 16.,
+    });
+    // The headless platform fixes device scaling at 2x; vary rem sizing too.
+    for rem in [12., 14., 16., 18.] {
+        for selected in [0, 1] {
+            for state in [
+                ConnectionState::Connected,
+                ConnectionState::Connecting,
+                ConnectionState::Disconnected,
+            ] {
+                view.update(cx, |view, cx| {
+                    view.rem = rem;
+                    view.selected = selected;
+                    view.state = state;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                cx.update(|window, cx| window.render_frame(cx));
+                let clipped_tab = cx.debug_bounds("status-tab").unwrap();
+                cx.update(|window, _| {
+                    let plain = window.find(("layout-title", 0u64)).bounds();
+                    let title = window.find(("layout-title", 1u64)).bounds();
+                    let plain_mark = window.find(("layout-mark", 0u64)).bounds();
+                    let mark = window.find(("layout-mark", 1u64)).bounds();
+                    let close = window.find(("layout-close", 1u64)).bounds();
+                    let dot = window
+                        .within(("layout-title", 1u64))
+                        .find("connection-status")
+                        .bounds();
+                    assert_eq!(title.size, plain.size, "badge must not affect title layout");
+                    assert_eq!(mark.size, plain_mark.size, "badge must not shrink the icon");
+                    assert_eq!(
+                        mark.center() - title.origin,
+                        plain_mark.center() - plain.origin
+                    );
+                    assert_eq!(mark.center().y, close.center().y);
+                    assert_eq!(mark.center().y, title.center().y);
+                    let centers = dot.center() - mark.center();
+                    let distance =
+                        (f32::from(centers.x).powi(2) + f32::from(centers.y).powi(2)).sqrt();
+                    assert!(
+                        distance > f32::from(mark.size.width + dot.size.width) / 2.,
+                        "circles must not overlap"
+                    );
+                    assert!(
+                        dot.bottom() <= clipped_tab.bottom() - px(1.),
+                        "badge must fit the dock tab"
+                    );
+                    assert!(
+                        dot.right() < mark.right() + px(rem / 4.),
+                        "badge must stop before the label"
+                    );
+                    assert!(dot.right() < close.left());
+                });
+            }
+        }
+    }
 }

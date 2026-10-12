@@ -24,6 +24,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
+    input::{InputEvent, InputState},
     menu::{ContextMenuExt as _, DropdownMenu as _},
     searchable_list::{SearchableGroup, SearchableListItem, SearchableVec},
     select::{Select, SelectEvent, SelectState},
@@ -176,7 +177,9 @@ type PathChoices = SearchableVec<SearchableGroup<PathChoice>>;
 
 pub struct FilePane {
     pub(super) side: PaneSide,
-    compact: bool,
+    pub(super) compact: bool,
+    pub(super) path_input: Entity<InputState>,
+    pub(super) editing_path: bool,
     /// The SFTP tab this pane belongs to, which its commands address.
     explorer: ExplorerId,
     /// The host whose bookmarks it shows.
@@ -264,7 +267,22 @@ impl FilePane {
                 .cell_selectable(false)
         });
         let path_select = cx.new(|cx| SelectState::new(PathChoices::new(vec![]), None, window, cx));
+        let path_input = cx.new(|cx| InputState::new(window, cx));
         let subscriptions = vec![
+            cx.subscribe_in(&path_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) && this.editing_path {
+                    let path = this.path_input.read(cx).value().to_string();
+                    this.finish_path_edit(window, cx);
+                    this.dispatch_command(
+                        ExplorerCommand::Navigate {
+                            remote: this.is_remote(),
+                            path,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            }),
             cx.subscribe_in(
                 &path_select,
                 window,
@@ -303,6 +321,8 @@ impl FilePane {
         let mut pane = Self {
             side,
             compact: false,
+            path_input,
+            editing_path: false,
             explorer,
             host_id,
             path: home.clone(),

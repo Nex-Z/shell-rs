@@ -34,9 +34,9 @@ use crate::app::{
     ExpandAllGroups, ExplorerAction, ExplorerCommand, ExplorerShortcut, FindInTerminal,
     FindNextInTerminal, FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand,
     MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, NewLocalTerminal,
-    NewTemporaryConnection, OpenExplorer, OpenSettings, PasteTerminal, PasteTerminalDraft,
-    QuickConnect, ReconnectTerminal, RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand,
-    RenameExplorer, RenameGroup, RenameTerminal, RestartLocalTerminal, SetFileSizeFormat,
+    NewTemporaryConnection, OpenExplorer, OpenSettings, PasteTerminal, QuickConnect,
+    ReconnectTerminal, RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand, RenameExplorer,
+    RenameGroup, RenameTerminal, RestartLocalTerminal, SetFileSizeFormat, SubmitTerminalDraft,
     ToggleHiddenFiles, ToggleHostPanel, ToggleTerminalCompose, ToggleTheme, ZoomIn, ZoomOut,
     ZoomReset, ZoomTerminalIn, ZoomTerminalOut, ZoomTerminalReset,
 };
@@ -166,6 +166,9 @@ pub struct Workspace {
     pub(super) explorers: HashMap<ExplorerId, Entity<ExplorerPanel>>,
     /// One lazily opened file sidebar per host, separate from its SFTP tabs.
     pub(super) file_sidebars: HashMap<HostId, ExplorerId>,
+    /// Last report consumed by each host's sidebar. A manual navigation is
+    /// not undone by unrelated focus, latency or store notifications.
+    pub(super) file_directories: HashMap<HostId, (RemoteTerminalId, u64, u64)>,
     pub(super) local_terminals: HashMap<LocalTerminalId, Entity<LocalTerminalPanel>>,
     /// The settings tab, while it is open. There is only ever one.
     settings_tab: Option<Entity<SettingsPanel>>,
@@ -541,6 +544,7 @@ impl Workspace {
             terminals,
             explorers: HashMap::new(),
             file_sidebars: HashMap::new(),
+            file_directories: HashMap::new(),
             local_terminals: HashMap::new(),
             settings_tab: None,
             settings,
@@ -661,6 +665,7 @@ impl Workspace {
         let Some(id) = self.file_sidebars.remove(&host) else {
             return;
         };
+        self.file_directories.remove(&host);
         let Some(panel) = self.explorers.get(&id).cloned() else {
             return;
         };
@@ -1551,6 +1556,7 @@ impl Workspace {
             );
             if self.file_sidebars.values().any(|sidebar| *sidebar == id) {
                 self.file_sidebars.retain(|_, sidebar| *sidebar != id);
+                self.file_directories.remove(&panel.read(cx).host_id());
                 self.tools
                     .update(cx, |tools, cx| tools.forget_files(id, window, cx));
                 // This explorer is embedded, so no Dock removal calls its
@@ -1879,26 +1885,21 @@ impl Workspace {
         }
     }
 
-    fn on_paste_terminal_draft(
+    fn on_submit_terminal_draft(
         &mut self,
-        action: &PasteTerminalDraft,
+        action: &SubmitTerminalDraft,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Button actions carry their tab ID. Never resolve the latest active
+        // Submit actions carry their tab ID. Never resolve the latest active
         // tab here; a split pane or delayed action must not change the target.
         if self.active_prompt.is_some() || window.has_active_dialog(cx) {
             return;
         }
-        if let Some(panel) = self.terminals.get(&action.0) {
-            let result = panel.update(cx, |panel, cx| panel.paste_draft(cx));
-            match result {
-                Ok(()) => {
-                    let focus = panel.read(cx).terminal().read(cx).focus_handle();
-                    window.focus(&focus, cx);
-                }
-                Err(error) => window.push_notification(Notification::error(error), cx),
-            }
+        if let Some(panel) = self.terminals.get(&action.0)
+            && let Err(error) = panel.update(cx, |panel, cx| panel.submit_draft(window, cx))
+        {
+            window.push_notification(Notification::error(error), cx);
         }
     }
 
@@ -2449,6 +2450,9 @@ fn new_terminal_panel(
                 this.store
                     .update(cx, |store, cx| store.set_host_os(host_id, Some(os), cx));
             }
+            TerminalPanelEvent::DirectoryChanged(_, _, _) => {
+                this.sync_tool_sidebar(window, cx);
+            }
             TerminalPanelEvent::Notice(terminal_id, notice) => {
                 this.on_terminal_notice(CenterTab::Terminal(*terminal_id), notice, window, cx)
             }
@@ -2565,6 +2569,7 @@ fn new_explorer_panel(
                     this.count_connection(*host_id, true, cx);
                 }
                 this.refresh_host_connection_state(*host_id, cx);
+                this.sync_tool_sidebar(window, cx);
             },
             ExplorerPanelEvent::StatusChanged(id) => {
                 if this.active_tab == Some(CenterTab::Explorer(*id)) {
@@ -2740,7 +2745,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_copy_terminal))
             .on_action(cx.listener(Self::on_paste_terminal))
             .on_action(cx.listener(Self::on_toggle_terminal_compose))
-            .on_action(cx.listener(Self::on_paste_terminal_draft))
+            .on_action(cx.listener(Self::on_submit_terminal_draft))
             .on_action(cx.listener(Self::on_find_in_terminal))
             .on_action(cx.listener(Self::on_find_next_in_terminal))
             .on_action(cx.listener(Self::on_find_previous_in_terminal))

@@ -459,6 +459,8 @@ pub struct HostDetails {
     pub password_saved: Option<bool>,
     pub route: RouteDetails,
     pub notes: String,
+    #[serde(default)]
+    pub bash_directory_tracking: bool,
     pub os: Option<String>,
     #[serde(default)]
     pub temporary: bool,
@@ -523,6 +525,8 @@ pub struct HostFields {
     pub route: Option<RouteFields>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bash_directory_tracking: Option<bool>,
 }
 
 /// A route as `hosts create` and `hosts update` take it: always whole.

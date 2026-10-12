@@ -210,27 +210,15 @@ terminal.compose.title:
 terminal.compose.toggle:
   zh-CN: 显示或隐藏此标签的撰写窗格
   en: Show or hide this tab’s compose pane
-terminal.compose.hide:
-  zh-CN: 隐藏
-  en: Hide
-terminal.compose.paste:
-  zh-CN: 粘贴到终端（不执行）
-  en: Paste to terminal (no Enter)
 terminal.compose.placeholder:
-  zh-CN: 在此撰写命令，请勿填写密码或其他秘密
-  en: Compose commands here. Do not enter passwords or other secrets
-terminal.compose.hint:
-  zh-CN: Enter 仅换行；粘贴后请在终端检查并按 Enter 执行。仅此标签，草稿不保存。
-  en: Enter adds a line. Review in the terminal, then press Enter to run. This tab only; drafts are not saved.
-terminal.compose.offline:
-  zh-CN: 终端未连接，不能粘贴。Enter 仅换行；草稿不保存。
-  en: Connect the terminal before pasting. Enter adds a line; drafts are not saved.
+  zh-CN: Enter 发送，Shift+Enter 换行
+  en: Enter to send, Shift+Enter for a new line
 terminal.compose.empty:
   zh-CN: 请先撰写命令
   en: Compose a command first
 terminal.compose.controls:
-  zh-CN: 草稿包含终端控制字符，请删除后再粘贴
-  en: Remove terminal control characters from the draft before pasting
+  zh-CN: 草稿包含终端控制字符，请删除后再发送
+  en: Remove terminal control characters from the draft before sending
 terminal.compose.multiline:
-  zh-CN: 当前终端未启用括号粘贴，不能安全粘贴多行或制表符。请逐行输入，或先在 shell 中启用括号粘贴。
-  en: This terminal has not enabled bracketed paste, so multiple lines or tabs cannot be pasted safely. Enter one line at a time, or enable bracketed paste in the shell first.
+  zh-CN: 当前终端未启用括号粘贴，不能安全发送多行或制表符。请逐行输入，或先在 shell 中启用括号粘贴。
+  en: This terminal has not enabled bracketed paste, so multiple lines or tabs cannot be sent safely. Enter one line at a time, or enable bracketed paste in the shell first.

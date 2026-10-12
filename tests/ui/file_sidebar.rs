@@ -42,9 +42,74 @@ impl SftpTransportProvider for FileServers {
     }
 }
 
+/// Output channels indexed by connection creation, so reports pass through
+/// the production byte parser without sending a command to a real server.
+#[derive(Default)]
+struct DirectoryTerminals {
+    next: AtomicUsize,
+    outputs:
+        Arc<Mutex<std::collections::HashMap<usize, async_channel::Sender<TerminalTransportEvent>>>>,
+}
+impl TerminalTransportFactory for DirectoryTerminals {
+    fn create(&self) -> Box<dyn TerminalTransport> {
+        Box::new(DirectoryTerminal {
+            index: self.next.fetch_add(1, Ordering::SeqCst) + 1,
+            outputs: self.outputs.clone(),
+        })
+    }
+}
+struct DirectoryTerminal {
+    index: usize,
+    outputs:
+        Arc<Mutex<std::collections::HashMap<usize, async_channel::Sender<TerminalTransportEvent>>>>,
+}
+impl TerminalTransport for DirectoryTerminal {
+    fn run(
+        self: Box<Self>,
+        _: TerminalSize,
+        commands: mpsc::Receiver<TerminalTransportCommand>,
+        events: async_channel::Sender<TerminalTransportEvent>,
+    ) -> anyhow::Result<()> {
+        self.outputs
+            .lock()
+            .unwrap()
+            .insert(self.index, events.clone());
+        events.send_blocking(TerminalTransportEvent::Started)?;
+        while let Ok(command) = commands.recv() {
+            if matches!(command, TerminalTransportCommand::Shutdown) {
+                break;
+            }
+        }
+        self.outputs.lock().unwrap().remove(&self.index);
+        let _ = events.send_blocking(TerminalTransportEvent::Exited {
+            code: 0,
+            signal: None,
+        });
+        Ok(())
+    }
+}
+impl DirectoryTerminals {
+    fn report(&self, terminal: u64, address: &str, encoded_path: &str) {
+        let output = self.outputs.lock().unwrap()[&(terminal as usize)].clone();
+        output
+            .send_blocking(TerminalTransportEvent::Output(
+                format!("\x1b]7;file://{address}{encoded_path}\x07").into_bytes(),
+            ))
+            .unwrap();
+    }
+}
+
 fn open_files_workspace(
     cx: &mut TestAppContext,
     web: Arc<FakeSftpProvider>,
+) -> (WindowHandle<Root>, Entity<Workspace>, Arc<FileServers>) {
+    open_files_workspace_with_terminals(cx, web, Arc::new(FakeTerminalFactory::default()))
+}
+
+fn open_files_workspace_with_terminals(
+    cx: &mut TestAppContext,
+    web: Arc<FakeSftpProvider>,
+    factory: SharedTerminalTransportFactory,
 ) -> (WindowHandle<Root>, Entity<Workspace>, Arc<FileServers>) {
     init_app(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
@@ -59,9 +124,7 @@ fn open_files_workspace(
     let handle = cx.open_window(size(px(1280.), px(800.)), |window, cx| {
         let store = cx.new(|_| store);
         let settings = cx.new(|_| settings_store());
-        let remote = Arc::new(FixedRemoteTerminalTransportProvider::new(Arc::new(
-            FakeTerminalFactory::default(),
-        )));
+        let remote = Arc::new(FixedRemoteTerminalTransportProvider::new(factory.clone()));
         let view = cx.new(|cx| {
             Workspace::new_with_services(
                 store,
@@ -401,36 +464,284 @@ async fn files_keep_each_hosts_directory_when_split_terminal_focus_changes(
 }
 
 #[gpui_kit::test]
+async fn terminal_directory_reports_follow_only_the_active_connection_and_new_paths(
+    cx: &mut TestAppContext,
+) {
+    let terminals = Arc::new(DirectoryTerminals::default());
+    let (handle, workspace, _) = open_files_workspace_with_terminals(
+        cx,
+        Arc::new(FakeSftpProvider::default()),
+        terminals.clone(),
+    );
+    let address = cx.update(|cx| {
+        workspace
+            .read(cx)
+            .store()
+            .read(cx)
+            .host(HostId(WEB_01))
+            .unwrap()
+            .address
+            .to_string()
+    });
+    let web = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        terminals.outputs.lock().unwrap().len() == 2
+    })
+    .await;
+    terminals.report(
+        INITIAL_WEB_TERMINAL,
+        &address,
+        "/srv/%E4%B8%AD%E6%96%87%20%25",
+    );
+    wait_for_path(cx, handle, web, "/srv/中文 %").await;
+    navigate(cx, handle, web, "/manual").await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("remote-path")
+                .value(),
+            Some("/manual")
+        );
+    });
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/srv/new-report");
+    wait_for_path(cx, handle, web, "/srv/new-report").await;
+
+    let staging = show_files(
+        cx,
+        handle,
+        &workspace,
+        INITIAL_STAGING_TERMINAL,
+        STAGING_API,
+    )
+    .await;
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/background-host");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(INITIAL_WEB_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/background-host")
+    })
+    .await;
+    wait_for_path(cx, handle, staging, "/home/tester").await;
+    show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    wait_for_path(cx, handle, web, "/background-host").await;
+
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(ConnectHost(HostId(WEB_01))), cx);
+    });
+    show_files(cx, handle, &workspace, FIRST_NEW_TERMINAL, WEB_01).await;
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        terminals.outputs.lock().unwrap().len() == 3
+    })
+    .await;
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/background-same-host");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(INITIAL_WEB_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/background-same-host")
+    })
+    .await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("remote-path")
+                .value(),
+            Some("/background-host")
+        );
+    });
+    terminals.report(FIRST_NEW_TERMINAL, &address, "/foreground-tab");
+    wait_for_path(cx, handle, web, "/foreground-tab").await;
+    terminals.report(
+        FIRST_NEW_TERMINAL,
+        "nested-ssh.example",
+        "/must-not-follow-nested-host",
+    );
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(FIRST_NEW_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/must-not-follow-nested-host")
+    })
+    .await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("remote-path")
+                .value(),
+            Some("/foreground-tab")
+        );
+    });
+
+    // A report that arrives while the user edits the address must not
+    // replace the input or spring back after Escape dismisses the editor.
+    in_frame(cx, handle, |window, cx| {
+        window
+            .within(("remote-pane", web.0))
+            .click("remote-path", cx);
+    });
+    terminals.report(FIRST_NEW_TERMINAL, &address, "/while-editing");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(FIRST_NEW_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/while-editing")
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("sidebar-path-input")
+                .value(),
+            Some("/foreground-tab")
+        );
+        window.press("escape", cx);
+    });
+    wait_for_path(cx, handle, web, "/foreground-tab").await;
+    terminals.report(FIRST_NEW_TERMINAL, &address, "/after-editing");
+    wait_for_path(cx, handle, web, "/after-editing").await;
+}
+
+#[gpui_kit::test]
+async fn sidebar_path_can_be_edited_by_click_and_enter_or_canceled_with_escape(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, servers) =
+        open_files_workspace(cx, Arc::new(FakeSftpProvider::default()));
+    let id = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    in_frame(cx, handle, |window, cx| {
+        window
+            .within(("remote-pane", id.0))
+            .click("remote-path", cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        let mut pane = window.within(("remote-pane", id.0));
+        assert!(pane.find("sidebar-path-input").visible());
+        pane.click("sidebar-path-input", cx);
+        #[cfg(target_os = "macos")]
+        pane.press("cmd-a", cx);
+        #[cfg(not(target_os = "macos"))]
+        pane.press("ctrl-a", cx);
+        pane.input("/srv/中文 目录", cx);
+        pane.press("enter", cx);
+    });
+    wait_for_path(cx, handle, id, "/srv/中文 目录").await;
+    in_frame(cx, handle, |window, cx| {
+        assert!(
+            window
+                .within(("remote-pane", id.0))
+                .try_find("sidebar-path-input")
+                .is_none()
+        );
+        window
+            .within(("remote-pane", id.0))
+            .click("remote-path", cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        let mut pane = window.within(("remote-pane", id.0));
+        pane.click("sidebar-path-input", cx);
+        #[cfg(target_os = "macos")]
+        pane.press("cmd-a", cx);
+        #[cfg(not(target_os = "macos"))]
+        pane.press("ctrl-a", cx);
+        pane.input("/must-not-open", cx);
+        pane.press("escape", cx);
+    });
+    in_frame(cx, handle, |window, _| {
+        let pane = window.within(("remote-pane", id.0));
+        assert!(pane.try_find("sidebar-path-input").is_none());
+        assert_eq!(pane.find("remote-path").value(), Some("/srv/中文 目录"));
+    });
+    assert!(servers.web.requests.lock().unwrap().is_empty());
+    assert!(servers.other.requests.lock().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
 async fn external_files_drop_into_the_current_directory_or_the_directory_row(
     cx: &mut TestAppContext,
 ) {
     let (handle, workspace, servers) =
         open_files_workspace(cx, Arc::new(FakeSftpProvider::default()));
     let id = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
-    for (row, target) in [(None, "/home/tester"), (Some("目录"), "/home/tester/目录")] {
+    for (index, (row, target)) in [(None, "/home/tester"), (Some("目录"), "/home/tester/目录")]
+        .into_iter()
+        .enumerate()
+    {
         drop_file(cx, handle, id, row, "/tmp/Finder 文件.txt");
-        in_frame(cx, handle, |window, cx| {
-            assert!(window.find("upload-confirm").visible());
-            assert_eq!(window.find("upload-target").value(), Some(target));
-            assert_eq!(
-                window.find("source:/tmp/Finder 文件.txt").label(),
-                Some("Finder 文件.txt")
-            );
-            assert!(servers.web.requests.lock().unwrap().is_empty());
-            if row.is_none() {
-                window.press("escape", cx);
-            } else {
-                window.click("upload-confirm", cx);
-            }
+        in_frame(cx, handle, |window, _| {
+            assert!(window.try_find("upload-confirm").is_none());
         });
+        wait_for_uploads(cx, handle, &servers.web, index + 1).await;
+        {
+            let requests = servers.web.requests.lock().unwrap();
+            assert_eq!(
+                requests[index].sources(),
+                [PathBuf::from("/tmp/Finder 文件.txt")]
+            );
+            assert_eq!(requests[index].destination().as_str(), target);
+        }
+        // The fake transport does not complete by itself. Complete the first
+        // upload so the next real drop can start and expose its own target.
+        let events = servers.web.events.lock().unwrap()[0].clone();
+        events
+            .send_blocking(SftpEvent::Progress(TransferProgress::new(
+                TransferPhase::Completed,
+            )))
+            .unwrap();
+        events.send_blocking(SftpEvent::Idle).unwrap();
+        cx.run_until_parked();
     }
+    assert!(servers.other.requests.lock().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+async fn sidebar_drop_skips_initial_confirmation_but_keeps_overwrite_questions(
+    cx: &mut TestAppContext,
+) {
+    use shellrs::sftp::{TransferQuestion, TransferQuestionKind};
+    let (handle, workspace, servers) =
+        open_files_workspace(cx, Arc::new(FakeSftpProvider::default()));
+    let id = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    drop_file(cx, handle, id, None, "/tmp/existing.txt");
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("upload-confirm").is_none());
+    });
     wait_for_uploads(cx, handle, &servers.web, 1).await;
-    let requests = servers.web.requests.lock().unwrap();
-    assert_eq!(
-        requests[0].sources(),
-        [PathBuf::from("/tmp/Finder 文件.txt")]
-    );
-    assert_eq!(requests[0].destination().as_str(), "/home/tester/目录");
+    servers.web.events.lock().unwrap()[0]
+        .send_blocking(SftpEvent::Question(TransferQuestion::new(
+            900,
+            TransferQuestionKind::Conflict,
+            "/home/tester/existing.txt",
+            "目标已存在",
+        )))
+        .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        window.try_find("transfer-question-confirm").is_some()
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        assert!(window.try_find("upload-confirm").is_none());
+        window.click("transfer-question-cancel", cx);
+    });
+    wait_for_queue_status(cx, handle, "已停止").await;
+    assert_eq!(servers.web.requests.lock().unwrap().len(), 1);
     assert!(servers.other.requests.lock().unwrap().is_empty());
 }
 
@@ -469,15 +780,63 @@ async fn choosing_uploads_keeps_the_original_host_and_directory_after_a_tab_swit
         Some(vec!["/tmp/original.txt".into()])
     });
     cx.run_until_parked();
-    in_frame(cx, handle, |window, cx| {
-        assert_eq!(window.find("upload-target").value(), Some("/original"));
-        window.click("upload-confirm", cx);
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("upload-confirm").is_none());
     });
     wait_for_uploads(cx, handle, &servers.web, 1).await;
     assert!(servers.other.requests.lock().unwrap().is_empty());
     let requests = servers.web.requests.lock().unwrap();
     assert_eq!(requests[0].sources(), [PathBuf::from("/tmp/original.txt")]);
     assert_eq!(requests[0].destination().as_str(), "/original");
+}
+
+#[gpui_kit::test]
+async fn an_upload_picker_from_an_old_connection_cannot_enqueue_after_reconnect(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, servers) =
+        open_files_workspace(cx, Arc::new(FakeSftpProvider::default()));
+    let id = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    let generation = cx.update(|cx| {
+        workspace
+            .read(cx)
+            .explorer(id)
+            .unwrap()
+            .read(cx)
+            .generation()
+    });
+    command(cx, handle, id, ExplorerCommand::ChooseFiles);
+    assert!(cx.did_prompt_for_paths());
+    // The native chooser is still open when the original connection is replaced.
+    let events = servers.web.events.lock().unwrap()[0].clone();
+    events.send_blocking(SftpEvent::Connecting).unwrap();
+    events
+        .send_blocking(SftpEvent::Connected {
+            home: RemotePath::new("/home/tester").unwrap(),
+        })
+        .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        let panel = workspace.read(cx).explorer(id).unwrap().read(cx);
+        panel.generation() != generation && panel.connection_state() == ConnectionState::Connected
+    })
+    .await;
+    cx.simulate_path_prompt_response(|_| Some(vec!["/tmp/stale-picker.txt".into()]));
+    cx.run_until_parked();
+    in_frame(cx, handle, |window, cx| {
+        assert!(window.try_find("upload-confirm").is_none());
+        assert!(window.try_find(("queue-entry", 1u64)).is_none());
+        assert!(
+            !workspace
+                .read(cx)
+                .explorer(id)
+                .unwrap()
+                .read(cx)
+                .is_transferring()
+        );
+    });
+    assert!(servers.web.requests.lock().unwrap().is_empty());
+    assert!(servers.other.requests.lock().unwrap().is_empty());
 }
 
 #[gpui_kit::test]
@@ -545,12 +904,9 @@ async fn hiding_files_and_closing_its_terminal_keep_the_connection_and_queue_run
         .enumerate()
     {
         drop_file(cx, handle, id, None, path);
-        in_frame(cx, handle, |window, cx| {
-            assert_eq!(
-                window.try_find("transfer-queued-note").is_some(),
-                index == 1
-            );
-            window.click("upload-confirm", cx);
+        in_frame(cx, handle, |window, _| {
+            assert!(window.try_find("upload-confirm").is_none());
+            assert!(window.find(("queue-entry", (index + 1) as u64)).visible());
         });
         wait_for_uploads(cx, handle, &servers.web, 1).await;
     }
@@ -611,7 +967,9 @@ async fn deleting_the_host_releases_its_hidden_file_sidebar(cx: &mut TestAppCont
     let id = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
     let weak = cx.update(|cx| workspace.read(cx).explorer(id).unwrap().downgrade());
     drop_file(cx, handle, id, None, "/tmp/unfinished.txt");
-    in_frame(cx, handle, |window, cx| window.click("upload-confirm", cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("upload-confirm").is_none());
+    });
     wait_for_uploads(cx, handle, &servers.web, 1).await;
     in_frame(cx, handle, |window, cx| window.click("tool-files", cx));
     in_frame(cx, handle, |window, cx| {
@@ -873,7 +1231,9 @@ async fn changing_a_hosts_address_blocks_old_sidebar_commands_until_reopened(
     });
     for path in ["/tmp/approved-first.txt", "/tmp/approved-second.txt"] {
         drop_file(cx, handle, old, None, path);
-        in_frame(cx, handle, |window, cx| window.click("upload-confirm", cx));
+        in_frame(cx, handle, |window, _| {
+            assert!(window.try_find("upload-confirm").is_none());
+        });
         wait_for_uploads(cx, handle, &servers.web, 1).await;
     }
     let change_address = |cx: &mut TestAppContext, address: &str| {
@@ -1023,7 +1383,9 @@ async fn temporary_hosts_release_idle_sidebars_but_keep_promoted_transfers_until
         let events = servers.other.events.lock().unwrap().last().unwrap().clone();
         if work == "upload" {
             drop_file(cx, handle, id, None, "/tmp/temporary.txt");
-            in_frame(cx, handle, |window, cx| window.click("upload-confirm", cx));
+            in_frame(cx, handle, |window, _| {
+                assert!(window.try_find("upload-confirm").is_none());
+            });
             wait_for_uploads(cx, handle, &servers.other, 1).await;
         }
         if work == "editor" {
@@ -1128,7 +1490,9 @@ async fn narrow_english_file_sidebar_keeps_long_queue_errors_inside_at_larger_te
         None,
         "/tmp/a-very-long-source-file-name-that-exceeds-a-narrow-sidebar.txt",
     );
-    in_frame(cx, handle, |window, cx| window.click("upload-confirm", cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("upload-confirm").is_none());
+    });
     wait_for_uploads(cx, handle, &servers.web, 1).await;
     wait_for_queue_status(cx, handle, "Scanning").await;
     let note = "Connection lost while uploading the selected files; waiting to reconnect to the original server before continuing this transfer";
@@ -1206,7 +1570,9 @@ async fn a_temporary_hosts_stopped_sidebar_becomes_a_resumable_closable_file_tab
     let (host, terminal, id) = show_temporary_files(cx, handle, &workspace, address).await;
     let entity = cx.update(|cx| workspace.read(cx).explorer(id).unwrap().entity_id());
     drop_file(cx, handle, id, None, "/tmp/stopped.txt");
-    in_frame(cx, handle, |window, cx| window.click("upload-confirm", cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("upload-confirm").is_none());
+    });
     wait_for_uploads(cx, handle, &servers.other, 1).await;
     in_frame(cx, handle, |window, cx| window.click("cancel-transfer", cx));
     wait_for_queue_status(cx, handle, "已停止").await;
@@ -1294,7 +1660,9 @@ async fn an_existing_sftp_tab_does_not_hide_a_temporary_hosts_promoted_transfer(
     let entity = cx.update(|cx| workspace.read(cx).explorer(id).unwrap().entity_id());
     let events = servers.other.events.lock().unwrap().last().unwrap().clone();
     drop_file(cx, handle, id, None, "/tmp/still-running.txt");
-    in_frame(cx, handle, |window, cx| window.click("upload-confirm", cx));
+    in_frame(cx, handle, |window, _| {
+        assert!(window.try_find("upload-confirm").is_none());
+    });
     wait_for_uploads(cx, handle, &servers.other, 1).await;
     in_frame(cx, handle, |window, cx| {
         window.dispatch_action(Box::new(OpenExplorer(host)), cx)

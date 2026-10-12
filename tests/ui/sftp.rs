@@ -1228,11 +1228,13 @@ async fn sftp_tab_reconnects_from_its_tab_bar_and_reports_at_the_bottom_left(
             let mark = tab.find(("explorer-tab-os", SFTP_TAB)).bounds();
             let dot = tab.find("connection-status").bounds();
             let title = window.find(("explorer-tab", SFTP_TAB)).bounds();
-            assert!(dot.left() > mark.right());
-            assert!(dot.top() > mark.bottom());
-            assert!(dot.right() < window.find(("close-explorer", SFTP_TAB)).bounds().left());
-            assert!(dot.bottom() <= title.bottom());
-            assert!(title.size.height <= px(30.));
+            let close = window.find(("close-explorer", SFTP_TAB)).bounds();
+            assert_eq!(mark.center().y, close.center().y);
+            assert_eq!(mark.center().y, title.center().y);
+            let centers = dot.center() - mark.center();
+            let distance = (f32::from(centers.x).powi(2) + f32::from(centers.y).powi(2)).sqrt();
+            assert!(distance > f32::from(mark.size.width + dot.size.width) / 2.);
+            assert!(dot.right() < close.left());
             window
                 .within(("remote-pane", SFTP_TAB))
                 .find("table")

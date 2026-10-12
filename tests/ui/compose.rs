@@ -1,6 +1,6 @@
-//! The remote tab's draft is local editing until explicitly pasted.
+//! The remote tab's draft is local editing until submitted with a fresh Enter.
 use crate::support::*;
-use shellrs::app::{PasteTerminalDraft, ToggleTerminalCompose};
+use shellrs::app::{SubmitTerminalDraft, ToggleTerminalCompose};
 
 async fn open_compose(
     cx: &mut TestAppContext,
@@ -29,17 +29,17 @@ async fn open_compose(
 }
 
 #[gpui_kit::test]
-async fn compose_enter_edits_and_hidden_draft_is_retained(cx: &mut TestAppContext) {
+async fn compose_shift_enter_edits_and_plain_enter_submits_once(cx: &mut TestAppContext) {
     let (handle, _, factory) = open_compose(cx, "\x1b[?2004h").await;
     in_frame(cx, handle, |window, cx| {
         window.click(("terminal-compose-input", INITIAL_WEB_TERMINAL), cx);
         window.input("echo 中文", cx);
-        window.press("enter", cx);
+        window.press("shift-enter", cx);
         window.input("echo second", cx);
     });
     assert_eq!(factory.written_text(), "");
     in_frame(cx, handle, |window, cx| {
-        window.click(("hide-terminal-compose", INITIAL_WEB_TERMINAL), cx);
+        window.click(("toggle-terminal-compose", INITIAL_WEB_TERMINAL), cx);
     });
     in_frame(cx, handle, |window, cx| {
         assert!(
@@ -50,10 +50,11 @@ async fn compose_enter_edits_and_hidden_draft_is_retained(cx: &mut TestAppContex
         window.click(("toggle-terminal-compose", INITIAL_WEB_TERMINAL), cx);
     });
     in_frame(cx, handle, |window, cx| {
-        window.click(("paste-terminal-draft", INITIAL_WEB_TERMINAL), cx);
+        window.click(("terminal-compose-input", INITIAL_WEB_TERMINAL), cx);
+        window.press("enter", cx);
     });
     cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
-        factory.written_text() == "\x1b[200~echo 中文\necho second\x1b[201~"
+        factory.written_text() == "\x1b[200~echo 中文\necho second\x1b[201~\r"
     })
     .await;
 }
@@ -69,7 +70,7 @@ async fn compose_rejects_multiline_without_bracketed_paste_and_disconnected_inpu
         window.input("echo first\necho second", cx);
     });
     in_frame(cx, handle, |window, cx| {
-        window.click(("paste-terminal-draft", id.0), cx);
+        window.press("enter", cx);
     });
     in_frame(cx, handle, |window, cx| {
         assert_eq!(factory.written_text(), "");
@@ -82,7 +83,7 @@ async fn compose_rejects_multiline_without_bracketed_paste_and_disconnected_inpu
     let starts = factory.starts();
     in_frame(cx, handle, |window, cx| {
         // The handler rechecks connection state even for direct actions.
-        window.dispatch_action(Box::new(PasteTerminalDraft(id)), cx);
+        window.dispatch_action(Box::new(SubmitTerminalDraft(id)), cx);
         window.click(("terminal-compose-input", id.0), cx);
         window.press("enter", cx);
         window.input("echo still editing", cx);
@@ -130,20 +131,21 @@ async fn compose_drafts_are_per_tab_and_removed_with_the_tab(cx: &mut TestAppCon
         window.input("echo second", cx);
     });
     in_frame(cx, handle, |window, cx| {
-        window.click(("paste-terminal-draft", second), cx);
+        window.press("enter", cx);
     });
     cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
-        factory.written_text() == "echo second"
+        factory.written_text() == "echo second\r"
     })
     .await;
     in_frame(cx, handle, |window, cx| {
         window.click(("terminal-tab", first), cx);
     });
     in_frame(cx, handle, |window, cx| {
-        window.click(("paste-terminal-draft", first), cx);
+        window.click(("terminal-compose-input", first), cx);
+        window.press("enter", cx);
     });
     cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
-        factory.written_text() == "echo secondecho first"
+        factory.written_text() == "echo second\recho first\r"
     })
     .await;
     in_frame(cx, handle, |window, cx| {
@@ -211,9 +213,83 @@ async fn compose_top_divider_resizes_without_covering_the_terminal(cx: &mut Test
             .bounds();
         let terminal = window.find(("terminal", INITIAL_WEB_TERMINAL)).bounds();
         assert!(pane.size.height > original_height);
-        assert!(pane.size.height >= px(180.));
+        assert!(pane.size.height >= px(80.));
         assert!(terminal.size.height >= px(80.));
         assert!(terminal.bottom() <= pane.top() + px(1.));
     });
+    assert_eq!(factory.written_text(), "");
+}
+
+#[gpui_kit::test]
+async fn compose_success_clears_draft_keeps_focus_and_ignores_repeat(cx: &mut TestAppContext) {
+    use gpui_kit::{KeyDownEvent, Keystroke};
+    let (handle, _, factory) = open_compose(cx, "").await;
+    in_frame(cx, handle, |window, cx| {
+        window.click(("terminal-compose-input", INITIAL_WEB_TERMINAL), cx);
+        window.input("echo one", cx);
+        window.press("enter", cx);
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        factory.written_text() == "echo one\r"
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        // Empty Enter and OS key-repeat cannot resend the previous command.
+        window.press("enter", cx);
+        window.input("echo two", cx);
+        window.dispatch_event(
+            KeyDownEvent {
+                keystroke: Keystroke::parse("enter").unwrap(),
+                is_held: true,
+                prefer_character_input: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(factory.written_text(), "echo one\r");
+    in_frame(cx, handle, |window, cx| {
+        window.press("enter", cx);
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        factory.written_text() == "echo one\recho two\r"
+    })
+    .await;
+}
+
+#[gpui_kit::test]
+async fn compose_does_not_submit_while_find_or_another_tab_has_focus(cx: &mut TestAppContext) {
+    let (handle, _, factory) = open_compose(cx, "").await;
+    in_frame(cx, handle, |window, cx| {
+        window.click(("terminal-compose-input", INITIAL_WEB_TERMINAL), cx);
+        window.input("echo retained", cx);
+        window.dispatch_action(Box::new(FindInTerminal), cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.press("enter", cx);
+    });
+    assert_eq!(factory.written_text(), "");
+    in_frame(cx, handle, |window, cx| {
+        window.click(("terminal-tab", INITIAL_STAGING_TERMINAL), cx);
+        window.dispatch_action(
+            Box::new(SubmitTerminalDraft(RemoteTerminalId(INITIAL_WEB_TERMINAL))),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(factory.written_text(), "");
+}
+
+#[gpui_kit::test]
+async fn compose_cancels_queued_enter_when_focus_moves_before_dispatch(cx: &mut TestAppContext) {
+    let (handle, _, factory) = open_compose(cx, "").await;
+    in_frame(cx, handle, |window, cx| {
+        window.click(("terminal-compose-input", INITIAL_WEB_TERMINAL), cx);
+        window.input("echo never", cx);
+        window.press("enter", cx);
+        window.click(("terminal-tab", INITIAL_STAGING_TERMINAL), cx);
+    });
+    cx.run_until_parked();
     assert_eq!(factory.written_text(), "");
 }

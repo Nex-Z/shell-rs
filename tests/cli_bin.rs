@@ -331,6 +331,7 @@ fn a_host_described_on_stdin_reaches_the_app_and_comes_back_saved() {
                         password_saved: Some(password.is_some()),
                         route: RouteDetails::Direct,
                         notes: String::new(),
+                        bash_directory_tracking: false,
                         os: None,
                         temporary: false,
                     })));

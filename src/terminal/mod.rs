@@ -1,6 +1,7 @@
 //! 终端: shared terminal emulation, transports and Dock panels.
 
 mod compose_pane;
+mod directory;
 mod engine;
 mod exec;
 mod font;
@@ -20,6 +21,7 @@ mod terminal_view;
 mod theme;
 mod transport;
 
+pub use directory::ReportedDirectory;
 pub use engine::{TerminalCell, TerminalEngine, TerminalEvent, TerminalSnapshot};
 pub use exec::{ExecTarget, exec_answer};
 pub use font::{
