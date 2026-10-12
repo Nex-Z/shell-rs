@@ -212,6 +212,10 @@ id_actions! {
     DisconnectTerminal(RemoteTerminalId);
     /// Open the dialog that gives one remote terminal tab its own title.
     RenameTerminal(RemoteTerminalId);
+    /// Show or hide one remote terminal tab’s memory-only compose pane.
+    ToggleTerminalCompose(RemoteTerminalId);
+    /// Paste that tab’s draft, without Enter or replacing its input line.
+    PasteTerminalDraft(RemoteTerminalId);
 
     /// Close a local terminal tab and terminate its child process.
     CloseLocalTerminal(LocalTerminalId);

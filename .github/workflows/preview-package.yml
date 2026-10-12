@@ -43,6 +43,17 @@ jobs:
         rustc --version
 
         cargo --version'
+    # Dependency-only cache: toolchain, OS, lockfile and Cargo profile env are keyed.
+    # Workspace binaries, incremental files and unused/old dependencies are pruned.
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: preview-v1
+        key: ${{ runner.os }}-${{ runner.arch }}-rust1.98.1-default-preview-debug0-release-thin
+        cache-bin: 'false'
+        cache-workspace-crates: 'false'
+        cache-on-failure: 'true'
+        env-vars: CARGO CC CFLAGS CXX CMAKE RUST
     - name: Format
       run: cargo fmt --check 2>&1 | tee validation-logs/format.log
     - name: Default Clippy
@@ -81,6 +92,17 @@ jobs:
         rustc --version
 
         cargo --version'
+    # Dependency-only cache: toolchain, OS, lockfile and Cargo profile env are keyed.
+    # Workspace binaries, incremental files and unused/old dependencies are pruned.
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: preview-v1
+        key: ${{ runner.os }}-${{ runner.arch }}-rust1.98.1-default-preview-debug0-release-thin
+        cache-bin: 'false'
+        cache-workspace-crates: 'false'
+        cache-on-failure: 'true'
+        env-vars: CARGO CC CFLAGS CXX CMAKE RUST
     - uses: ilammy/setup-nasm@v1
     - name: Windows default Clippy
       run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee validation-logs/windows-default-clippy.log
@@ -113,6 +135,15 @@ jobs:
 
         cargo test --locked --features preview --test ui a_preview_cannot_enable_updates_through_settings_or_manual_actions
         2>&1 | tee validation-logs/preview-updater.log'
+    - name: Windows preview terminal interaction tests
+      run: |
+        cargo test --locked --features preview --lib compose_draft 2>&1 | tee validation-logs/windows-compose-encoding.log
+        cargo test --locked --features preview --test ui compose:: 2>&1 | tee validation-logs/windows-compose-ui.log
+        cargo test --locked --features preview --test ui connection:: 2>&1 | tee validation-logs/windows-connection-ui.log
+    - name: Windows preview file and monitor tests
+      run: |
+        cargo test --locked --features preview --test ui file_sidebar:: 2>&1 | tee validation-logs/windows-file-sidebar-ui.log
+        cargo test --locked --features preview --test ui monitor:: 2>&1 | tee validation-logs/windows-monitor-ui.log
     - name: Build portable preview
       env:
         SHELLRS_COMMIT: ${{ github.sha }}

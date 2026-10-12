@@ -34,11 +34,11 @@ use crate::app::{
     ExpandAllGroups, ExplorerAction, ExplorerCommand, ExplorerShortcut, FindInTerminal,
     FindNextInTerminal, FindPreviousInTerminal, FocusSearch, InstallAgentSkill, InstallCliCommand,
     MoveHostNode, NewChildGroup, NewGroup, NewHost, NewHostInGroup, NewLocalTerminal,
-    NewTemporaryConnection, OpenExplorer, OpenSettings, PasteTerminal, QuickConnect,
-    ReconnectTerminal, RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand, RenameExplorer,
-    RenameGroup, RenameTerminal, RestartLocalTerminal, SetFileSizeFormat, ToggleHiddenFiles,
-    ToggleHostPanel, ToggleTheme, ZoomIn, ZoomOut, ZoomReset, ZoomTerminalIn, ZoomTerminalOut,
-    ZoomTerminalReset,
+    NewTemporaryConnection, OpenExplorer, OpenSettings, PasteTerminal, PasteTerminalDraft,
+    QuickConnect, ReconnectTerminal, RefreshCliIntegration, RemoveAgentSkill, RemoveCliCommand,
+    RenameExplorer, RenameGroup, RenameTerminal, RestartLocalTerminal, SetFileSizeFormat,
+    ToggleHiddenFiles, ToggleHostPanel, ToggleTerminalCompose, ToggleTheme, ZoomIn, ZoomOut,
+    ZoomReset, ZoomTerminalIn, ZoomTerminalOut, ZoomTerminalReset,
 };
 use crate::cli::{CliIntegration, CliServer, IntegrationPaths, SshCliBackend};
 use crate::connection::{
@@ -1863,6 +1863,43 @@ impl Workspace {
         }
     }
 
+    fn on_toggle_terminal_compose(
+        &mut self,
+        action: &ToggleTerminalCompose,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        if let Some(panel) = self.terminals.get(&action.0) {
+            panel.update(cx, |panel, cx| panel.toggle_compose(window, cx));
+        }
+    }
+
+    fn on_paste_terminal_draft(
+        &mut self,
+        action: &PasteTerminalDraft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Button actions carry their tab ID. Never resolve the latest active
+        // tab here; a split pane or delayed action must not change the target.
+        if self.active_prompt.is_some() || window.has_active_dialog(cx) {
+            return;
+        }
+        if let Some(panel) = self.terminals.get(&action.0) {
+            let result = panel.update(cx, |panel, cx| panel.paste_draft(cx));
+            match result {
+                Ok(()) => {
+                    let focus = panel.read(cx).terminal().read(cx).focus_handle();
+                    window.focus(&focus, cx);
+                }
+                Err(error) => window.push_notification(Notification::error(error), cx),
+            }
+        }
+    }
+
     fn on_copy_terminal(&mut self, _: &CopyTerminal, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(terminal) = self.active_terminal(cx) {
             terminal.update(cx, |terminal, cx| terminal.copy_selection(cx));
@@ -2698,6 +2735,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_restart_local_terminal))
             .on_action(cx.listener(Self::on_copy_terminal))
             .on_action(cx.listener(Self::on_paste_terminal))
+            .on_action(cx.listener(Self::on_toggle_terminal_compose))
+            .on_action(cx.listener(Self::on_paste_terminal_draft))
             .on_action(cx.listener(Self::on_find_in_terminal))
             .on_action(cx.listener(Self::on_find_next_in_terminal))
             .on_action(cx.listener(Self::on_find_previous_in_terminal))

@@ -494,6 +494,20 @@ impl TerminalView {
         Ok(())
     }
 
+    /// Paste the tab’s compose draft without executing it.
+    pub(super) fn paste_draft(
+        &mut self,
+        draft: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SharedString> {
+        self.engine.read(cx).paste_draft(draft)?;
+        self.selecting = false;
+        self.scroll_accumulator.reset();
+        self.cursor_visible = true;
+        cx.notify();
+        Ok(())
+    }
+
     /// Add the owner's commands below the terminal's own in the context menu.
     pub fn set_menu_items(&mut self, items: TerminalMenuItems) {
         self.menu_items = Some(items);
