@@ -238,6 +238,7 @@ The list is read once when you open Network or switch terminals and doesn’t ch
 - **System**: host name, architecture, distribution and uptime (such as “32 days 23:40:26”).
 - **CPU**: model, number of cores and average usage; with several cores, a small bar for each core below, and hovering over a bar shows that core’s number and usage. Only one row shows by default; when there are too many cores for one row, click “N cores” at the top right to show them all.
 - **Memory**: physical memory usage and the amount used; a second row when there’s swap.
+- **GPU**: reads available utilization, memory, temperature and power through NVIDIA queries and DRM/PCI sysfs. Missing metrics remain unknown rather than zero. Sampling runs every 6 seconds, backing off to 30 seconds when devices or metrics are unavailable. Hiding the panel cancels sampling; a transport failure stops queries until reconnection. Collection is read-only, installs nothing and does not request elevated privileges. Available metrics depend on the driver.
 - **Network**: upload and download rates of the main interface (the one with the default route); with several interfaces, click “N interfaces” at the top right to show them all (loopback interfaces and interfaces that have never sent or received data aren’t listed).
 - **Disks**: the usage of each local mount point (without in-memory file systems such as tmpfs, or mounts under system folders).
 

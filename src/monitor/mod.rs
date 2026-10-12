@@ -2,6 +2,7 @@
 //! and disks of the host of the SSH terminal in front, read over that
 //! terminal's own connection. Linux hosts only, for now.
 
+mod gpu;
 mod linux;
 mod model;
 mod monitor_panel;

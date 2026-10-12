@@ -498,7 +498,22 @@ impl TerminalEngine {
         if !matches!(self.lifecycle, TerminalLifecycle::Running) {
             return None;
         }
-        self.runtime.exec(command)
+        self.runtime.exec(command, None, None)
+    }
+
+    /// Optional telemetry must not occupy the command queue for the default timeout.
+    pub(crate) fn exec_bounded(
+        &self,
+        command: String,
+        timeout: Duration,
+        output_limit: usize,
+        cancelled: Arc<AtomicBool>,
+    ) -> Option<mpsc::Receiver<ExecResult>> {
+        if !matches!(self.lifecycle, TerminalLifecycle::Running) {
+            return None;
+        }
+        self.runtime
+            .exec(command, Some((timeout, output_limit)), Some(cancelled))
     }
 
     /// Take up an `exec --terminal` run (see [`super::TerminalRun`]): ^C to
@@ -854,12 +869,19 @@ impl TerminalRuntime {
         let _ = self.commands.send(TerminalTransportCommand::Shutdown);
     }
 
-    fn exec(&self, command: String) -> Option<mpsc::Receiver<ExecResult>> {
+    fn exec(
+        &self,
+        command: String,
+        limits: Option<(Duration, usize)>,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> Option<mpsc::Receiver<ExecResult>> {
         let (reply, receiver) = mpsc::channel();
         self.commands
             .send(TerminalTransportCommand::Exec(ExecRequest {
                 command,
                 reply,
+                limits,
+                cancelled,
             }))
             .ok()?;
         Some(receiver)

@@ -367,3 +367,11 @@ ssh.exec.saved_passphrase_rejected:
 ssh.exec.keyboard_interactive:
   zh-CN: 服务器在键盘交互式认证中提出了密码以外的问题（如验证码），外部 CLI 无法回答
   en: The server asks keyboard-interactive questions besides the password (such as a verification code), which the external CLI can’t answer
+
+ssh.exec.output_limit:
+  zh-CN: 采集结果超过大小限制
+  en: The reading exceeded the output limit
+
+ssh.exec.cancelled:
+  zh-CN: 已取消采集
+  en: Collection cancelled

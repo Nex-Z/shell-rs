@@ -90,3 +90,38 @@ monitor.disks.none:
 monitor.disks.label:
   zh-CN: "%{percent}，%{used} / %{total}"
   en: "%{percent}, %{used} / %{total}"
+
+monitor.gpu.utilization:
+  zh-CN: GPU 使用率
+  en: GPU utilization
+monitor.gpu.memory:
+  zh-CN: 显存
+  en: GPU memory
+monitor.gpu.temperature:
+  zh-CN: 温度
+  en: Temperature
+monitor.gpu.power:
+  zh-CN: 功耗
+  en: Power
+monitor.gpu.missing_tool:
+  zh-CN: 已识别显卡，未找到 nvidia-smi；实时指标不可用
+  en: GPU detected; nvidia-smi is missing, so live metrics are unavailable
+monitor.gpu.denied:
+  zh-CN: 当前账号无法读取显卡指标
+  en: This account cannot read the GPU metrics
+monitor.gpu.tool_failed:
+  zh-CN: 显卡采集失败，部分指标不可用
+  en: GPU collection failed; some metrics are unavailable
+monitor.gpu.unavailable:
+  zh-CN: 此驱动未提供可读取的实时指标
+  en: This driver exposes no readable live metrics
+monitor.gpu.invalid:
+  zh-CN: GPU 采集结果不完整，稍后重试
+  en: The GPU reading is incomplete; it will be retried shortly
+monitor.gpu.failed:
+  zh-CN: GPU 采集未完成，已暂停至下次连接；其他系统指标仍会刷新
+  en: GPU collection did not complete and is paused until reconnect; other system metrics still refresh
+
+monitor.gpu.stale:
+  zh-CN: GPU 上次读数，等待更新
+  en: Last GPU reading; waiting for an update
