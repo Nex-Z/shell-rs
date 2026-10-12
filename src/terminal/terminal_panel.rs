@@ -338,6 +338,7 @@ impl Panel for TerminalPanel {
     fn toolbar_buttons(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<Vec<Button>> {
         let host_id = self.host_id;
         let terminal_id = self.id;
+        let reconnect_dispatch = self.dispatch.clone();
         Some(vec![
             Button::new(("toggle-terminal-compose", terminal_id.0))
                 .label(t!("terminal.compose.title"))
@@ -356,7 +357,7 @@ impl Panel for TerminalPanel {
                 .icon(Icon::new(CatalogIcon::RefreshCw))
                 .tooltip(t!("terminal.remote.reconnect"))
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(ReconnectTerminal(terminal_id)), cx)
+                    reconnect_dispatch.dispatch_action(&ReconnectTerminal(terminal_id), window, cx)
                 }),
         ])
     }

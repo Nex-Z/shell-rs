@@ -619,5 +619,8 @@ host.dialog.bash_directory_tracking:
   zh-CN: 启用 Bash 目录跟随增强
   en: Enable Bash directory tracking
 host.dialog.bash_directory_tracking_note:
+  zh-CN: 让文件窗格跟随终端目录，仅支持 Bash，重连后生效。
+  en: Let the file pane follow the terminal directory. Bash only; takes effect after reconnecting.
+host.dialog.bash_directory_tracking_tooltip:
   zh-CN: 默认关闭，仅下次连接生效。不修改服务器配置或断开当前连接。会改变 Shell 启动方式，特殊/受限登录可能不兼容；自定义启动脚本可能重复加载，不适用于依赖一次性启动操作的环境。
   en: Off by default; applies on the next connection. Does not change server configuration or disconnect the current connection. Changes shell startup and may be incompatible with special/restricted logins. Custom startup scripts may load more than once; avoid environments with one-time startup operations.

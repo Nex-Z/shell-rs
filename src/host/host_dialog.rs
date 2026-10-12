@@ -1233,6 +1233,7 @@ impl Render for HostForm {
                     .child(
                         Checkbox::new("host-bash-directory-tracking")
                             .label(t!("host.dialog.bash_directory_tracking"))
+                            .tooltip(t!("host.dialog.bash_directory_tracking_tooltip"))
                             .checked(self.bash_directory_tracking)
                             .small()
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {

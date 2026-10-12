@@ -270,7 +270,12 @@ impl FilePane {
         let path_input = cx.new(|cx| InputState::new(window, cx));
         let subscriptions = vec![
             cx.subscribe_in(&path_input, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) && this.editing_path {
+                if matches!(event, InputEvent::Blur) && this.editing_path {
+                    // Leaving the path input cancels editing without taking focus
+                    // back from the terminal or applying an uncommitted path.
+                    this.editing_path = false;
+                    cx.notify();
+                } else if matches!(event, InputEvent::PressEnter { .. }) && this.editing_path {
                     let path = this.path_input.read(cx).value().to_string();
                     this.finish_path_edit(window, cx);
                     this.dispatch_command(
