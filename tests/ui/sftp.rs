@@ -1199,6 +1199,15 @@ async fn sftp_tab_reconnects_from_its_tab_bar_and_reports_at_the_bottom_left(
         move |window: &mut gpui_kit::Window, cx: &mut App| {
             window.render_frame(cx);
             window.find("status-connection").label() == Some(expected)
+                && window
+                    .within(("explorer-tab", SFTP_TAB))
+                    .find("connection-status")
+                    .label()
+                    == Some(if expected.starts_with("已连接") {
+                        "已连接"
+                    } else {
+                        "未连接"
+                    })
         }
     };
     let table = cx
@@ -1208,6 +1217,24 @@ async fn sftp_tab_reconnects_from_its_tab_bar_and_reports_at_the_bottom_left(
                 window.find("status-connection").label(),
                 Some("已连接 db-01")
             );
+            assert_eq!(
+                window
+                    .within(("explorer-tab", SFTP_TAB))
+                    .find("connection-status")
+                    .label(),
+                Some("已连接")
+            );
+            let tab = window.within(("explorer-tab", SFTP_TAB));
+            let mark = tab.find(("explorer-tab-os", SFTP_TAB)).bounds();
+            let dot = tab.find("connection-status").bounds();
+            let title = window.find(("explorer-tab", SFTP_TAB)).bounds();
+            let close = window.find(("close-explorer", SFTP_TAB)).bounds();
+            assert_eq!(mark.center().y, close.center().y);
+            assert_eq!(mark.center().y, title.center().y);
+            let centers = dot.center() - mark.center();
+            let distance = (f32::from(centers.x).powi(2) + f32::from(centers.y).powi(2)).sqrt();
+            assert!(distance > f32::from(mark.size.width + dot.size.width) / 2.);
+            assert!(dot.right() < close.left());
             window
                 .within(("remote-pane", SFTP_TAB))
                 .find("table")

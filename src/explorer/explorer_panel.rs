@@ -905,6 +905,7 @@ impl Panel for ExplorerPanel {
         // The host's mark, as on the host's terminal tabs.
         let mark = HostMark::new(("explorer-tab-os", id.0), name, os).small();
         ClosableTabTitle::new(("explorer-tab", id.0), mark, self.tab_title(cx))
+            .connection_state(self.connection_state())
             .closable(("close-explorer", id.0), Box::new(CloseExplorer(id)))
             .context_menu(move |popup, _, cx| menu.build(popup, cx))
     }

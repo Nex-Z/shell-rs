@@ -5,11 +5,13 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     menu::{ContextMenuExt as _, PopupMenu},
+    tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::ToggleHostPanel;
+use crate::host::ConnectionState;
 use crate::i18n::t;
 
 type MenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
@@ -37,6 +39,7 @@ pub struct ClosableTabTitle {
     close: Option<(ElementId, Box<dyn Action>)>,
     menu: Option<MenuBuilder>,
     modified: bool,
+    connection_state: Option<ConnectionState>,
 }
 
 impl ClosableTabTitle {
@@ -54,7 +57,15 @@ impl ClosableTabTitle {
             close: None,
             menu: None,
             modified: false,
+            connection_state: None,
         }
+    }
+
+    /// Show this tab's own connection state, never its host's aggregate state.
+    /// Tabs that do not own a remote connection leave this unset.
+    pub fn connection_state(mut self, state: ConnectionState) -> Self {
+        self.connection_state = Some(state);
+        self
     }
 
     /// Mark the tab as holding changes not saved yet: a dot after the label,
@@ -83,10 +94,48 @@ impl ClosableTabTitle {
 
 impl RenderOnce for ClosableTabTitle {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        // The badge must not change the mark's layout box or baseline. Put
+        // its center at the circular mark's lower-right corner: the two
+        // circles remain separate without shifting the icon or title text.
+        let leading = match self.connection_state {
+            Some(state) => {
+                let color = match state {
+                    ConnectionState::Connected => cx.theme().success,
+                    ConnectionState::Connecting => cx.theme().warning,
+                    ConnectionState::Disconnected => cx.theme().danger,
+                };
+                let label = state.label();
+                div()
+                    .relative()
+                    .flex_shrink_0()
+                    .child(self.leading)
+                    .child(
+                        div()
+                            .id("connection-status")
+                            .test_support()
+                            .role(Role::Status)
+                            .aria_label(label.clone())
+                            .absolute()
+                            // Half the size_1p5 diameter, in the same rem
+                            // units, centers the dot on the mark's corner.
+                            .right(-rems(0.1875))
+                            .bottom(-rems(0.1875))
+                            .size_1p5()
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .bg(color)
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(label.clone()).build(window, cx)
+                            }),
+                    )
+                    .into_any_element()
+            }
+            None => self.leading,
+        };
         let row = h_flex()
             .id("title")
             .gap_1()
-            .child(self.leading)
+            .child(leading)
             .child(self.label.clone())
             .when(self.modified, |row| {
                 row.child(

@@ -74,6 +74,12 @@ async fn creates_independent_local_terminals_from_button_and_shortcut(cx: &mut T
         window.render_frame(cx);
         assert!(window.find(("local-terminal", 1_u64)).visible());
         assert_eq!(window.find(("local-terminal", 1_u64)).focused(), Some(true));
+        assert!(
+            window
+                .within(("local-terminal-tab", 1_u64))
+                .try_find("connection-status")
+                .is_none()
+        );
         #[cfg(target_os = "macos")]
         window.press("cmd-t", cx);
         #[cfg(not(target_os = "macos"))]
@@ -249,6 +255,14 @@ async fn exited_local_terminal_keeps_its_tab_and_restarts_fresh(cx: &mut TestApp
         window.render_frame(cx);
         assert!(window.find(("local-terminal", 1_u64)).visible());
         assert!(window.find(("local-terminal-exit", 1_u64)).visible());
+        window.click(("local-terminal", 1_u64), cx);
+        window.press("enter", cx);
+        assert_eq!(
+            factory.starts(),
+            1,
+            "local shells do not opt into SSH reconnect"
+        );
+        assert!(!local_screen(&workspace, cx).contains("按 Enter 重新连接"));
         cx.write_to_clipboard(ClipboardItem::new_string("退出后不可粘贴".into()));
         #[cfg(target_os = "macos")]
         window.press("cmd-v", cx);

@@ -192,6 +192,8 @@ Remote terminal tabs and SFTP tabs use the host’s system badge as their icon (
 
 ## Terminal
 
+Remote terminal and SFTP tabs show their own connection state with a status dot and text tooltip. After a remote connection fails, exits, is disconnected or has authentication cancelled, press an unmodified Enter with the terminal focused to reconnect that tab using the current host settings. Held keys, pasted input, search fields and authentication fields do not trigger reconnection. Local terminals retain their restart action.
+
 The terminal’s context menu has “Copy”, “Paste”, “Find…” and “Clear screen”; a remote terminal’s also has “Open SFTP”, “Reconnect” and “Disconnect”. “Disconnect” disconnects only this tab: the tab stays and can reconnect at any time, and other tabs and SFTP for the same host aren’t affected. Settings › Terminal › Interaction can make right-click paste or do nothing instead, and can turn on “Copy on select”.
 
 - **Scrollback**: each terminal keeps the last 10,000 lines. Scroll up with the wheel or trackpad and a scrollbar appears on the right (as in the app’s other lists, following the system’s “Show scroll bars” setting); drag it, or click the track to jump there. Full-screen programs such as vim, less and top have no scrollback and show no scrollbar.
