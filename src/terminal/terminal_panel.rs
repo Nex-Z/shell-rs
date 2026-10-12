@@ -18,8 +18,8 @@ use crate::i18n::t;
 use crate::shared::{ClosableTabTitle, HostMark, LatencyLabel, RenamableTab, close_tab_items};
 
 use super::{
-    RemoteTerminalId, SharedRemoteTerminalTransportProvider, TerminalEvent, TerminalLifecycle,
-    TerminalMenuItems, TerminalNotice, TerminalStatus, TerminalView,
+    RemoteTerminalId, ReportedDirectory, SharedRemoteTerminalTransportProvider, TerminalEvent,
+    TerminalLifecycle, TerminalMenuItems, TerminalNotice, TerminalStatus, TerminalView,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub enum TerminalPanelEvent {
     Connected(RemoteTerminalId, HostId),
     PromptRequested(RemoteTerminalId, HostId, ConnectionPrompt),
     HostOsDetected(HostId, HostOs),
+    DirectoryChanged(RemoteTerminalId, HostId, Option<ReportedDirectory>),
     Notice(RemoteTerminalId, TerminalNotice),
 }
 
@@ -103,6 +104,13 @@ impl TerminalPanel {
                     TerminalEvent::HostOsDetected(os) => {
                         cx.emit(TerminalPanelEvent::HostOsDetected(this.host_id, *os));
                     }
+                    TerminalEvent::DirectoryChanged(directory) => {
+                        cx.emit(TerminalPanelEvent::DirectoryChanged(
+                            this.id,
+                            this.host_id,
+                            directory.clone(),
+                        ));
+                    }
                     TerminalEvent::Notice(notice) => {
                         cx.emit(TerminalPanelEvent::Notice(this.id, notice.clone()));
                     }
@@ -129,6 +137,19 @@ impl TerminalPanel {
 
     pub fn host_id(&self) -> HostId {
         self.host_id
+    }
+
+    /// The original terminal's metadata, never the host shared by all tabs.
+    pub fn directory_revision(&self, cx: &App) -> u64 {
+        self.terminal.read(cx).directory_revision(cx)
+    }
+
+    pub fn reported_directory(&self, cx: &App) -> Option<ReportedDirectory> {
+        self.terminal.read(cx).reported_directory(cx)
+    }
+
+    pub fn connection_generation(&self, cx: &App) -> u64 {
+        self.terminal.read(cx).generation(cx)
     }
 
     pub fn tab_group(&self) -> Option<WeakEntity<TabGroup>> {

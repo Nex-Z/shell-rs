@@ -43,6 +43,63 @@ impl SftpTransportProvider for FileServers {
     }
 }
 
+/// Output channels indexed by connection creation, so reports pass through
+/// the production byte parser without sending a command to a real server.
+#[derive(Default)]
+struct DirectoryTerminals {
+    next: AtomicUsize,
+    outputs:
+        Arc<Mutex<std::collections::HashMap<usize, async_channel::Sender<TerminalTransportEvent>>>>,
+}
+impl TerminalTransportFactory for DirectoryTerminals {
+    fn create(&self) -> Box<dyn TerminalTransport> {
+        Box::new(DirectoryTerminal {
+            index: self.next.fetch_add(1, Ordering::SeqCst) + 1,
+            outputs: self.outputs.clone(),
+        })
+    }
+}
+struct DirectoryTerminal {
+    index: usize,
+    outputs:
+        Arc<Mutex<std::collections::HashMap<usize, async_channel::Sender<TerminalTransportEvent>>>>,
+}
+impl TerminalTransport for DirectoryTerminal {
+    fn run(
+        self: Box<Self>,
+        _: TerminalSize,
+        commands: mpsc::Receiver<TerminalTransportCommand>,
+        events: async_channel::Sender<TerminalTransportEvent>,
+    ) -> anyhow::Result<()> {
+        self.outputs
+            .lock()
+            .unwrap()
+            .insert(self.index, events.clone());
+        events.send_blocking(TerminalTransportEvent::Started)?;
+        while let Ok(command) = commands.recv() {
+            if matches!(command, TerminalTransportCommand::Shutdown) {
+                break;
+            }
+        }
+        self.outputs.lock().unwrap().remove(&self.index);
+        let _ = events.send_blocking(TerminalTransportEvent::Exited {
+            code: 0,
+            signal: None,
+        });
+        Ok(())
+    }
+}
+impl DirectoryTerminals {
+    fn report(&self, terminal: u64, address: &str, encoded_path: &str) {
+        let output = self.outputs.lock().unwrap()[&(terminal as usize)].clone();
+        output
+            .send_blocking(TerminalTransportEvent::Output(
+                format!("\x1b]7;file://{address}{encoded_path}\x07").into_bytes(),
+            ))
+            .unwrap();
+    }
+}
+
 fn open_files_workspace(
     cx: &mut TestAppContext,
     web: Arc<FakeSftpProvider>,
@@ -405,6 +462,161 @@ async fn files_keep_each_hosts_directory_when_split_terminal_focus_changes(
         });
     }
     assert_eq!(servers.connections.lock().unwrap().len(), 2);
+}
+
+#[gpui_kit::test]
+async fn terminal_directory_reports_follow_only_the_active_connection_and_new_paths(
+    cx: &mut TestAppContext,
+) {
+    let terminals = Arc::new(DirectoryTerminals::default());
+    let (handle, workspace, _) = open_files_workspace_with_terminals(
+        cx,
+        Arc::new(FakeSftpProvider::default()),
+        terminals.clone(),
+    );
+    let address = cx.update(|cx| {
+        workspace
+            .read(cx)
+            .store()
+            .read(cx)
+            .host(HostId(WEB_01))
+            .unwrap()
+            .address
+            .to_string()
+    });
+    let web = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        terminals.outputs.lock().unwrap().len() == 2
+    })
+    .await;
+    terminals.report(
+        INITIAL_WEB_TERMINAL,
+        &address,
+        "/srv/%E4%B8%AD%E6%96%87%20%25",
+    );
+    wait_for_path(cx, handle, web, "/srv/中文 %").await;
+    navigate(cx, handle, web, "/manual").await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("remote-path")
+                .value(),
+            Some("/manual")
+        );
+    });
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/srv/new-report");
+    wait_for_path(cx, handle, web, "/srv/new-report").await;
+
+    let staging = show_files(
+        cx,
+        handle,
+        &workspace,
+        INITIAL_STAGING_TERMINAL,
+        STAGING_API,
+    )
+    .await;
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/background-host");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(INITIAL_WEB_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/background-host")
+    })
+    .await;
+    wait_for_path(cx, handle, staging, "/home/tester").await;
+    show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    wait_for_path(cx, handle, web, "/background-host").await;
+
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(ConnectHost(HostId(WEB_01))), cx);
+    });
+    show_files(cx, handle, &workspace, FIRST_NEW_TERMINAL, WEB_01).await;
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        terminals.outputs.lock().unwrap().len() == 3
+    })
+    .await;
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/background-same-host");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(INITIAL_WEB_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/background-same-host")
+    })
+    .await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("remote-path")
+                .value(),
+            Some("/background-host")
+        );
+    });
+    terminals.report(FIRST_NEW_TERMINAL, &address, "/foreground-tab");
+    wait_for_path(cx, handle, web, "/foreground-tab").await;
+    terminals.report(
+        FIRST_NEW_TERMINAL,
+        "nested-ssh.example",
+        "/must-not-follow-nested-host",
+    );
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(FIRST_NEW_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/must-not-follow-nested-host")
+    })
+    .await;
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("remote-path")
+                .value(),
+            Some("/foreground-tab")
+        );
+    });
+
+    // A report that arrives while the user edits the address must not
+    // replace the input or spring back after Escape dismisses the editor.
+    in_frame(cx, handle, |window, cx| {
+        window
+            .within(("remote-pane", web.0))
+            .click("remote-path", cx);
+    });
+    terminals.report(FIRST_NEW_TERMINAL, &address, "/while-editing");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(FIRST_NEW_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/while-editing")
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        assert_eq!(
+            window
+                .within(("remote-pane", web.0))
+                .find("sidebar-path-input")
+                .value(),
+            Some("/foreground-tab")
+        );
+        window.press("escape", cx);
+    });
+    wait_for_path(cx, handle, web, "/foreground-tab").await;
+    terminals.report(FIRST_NEW_TERMINAL, &address, "/after-editing");
+    wait_for_path(cx, handle, web, "/after-editing").await;
 }
 
 #[gpui_kit::test]
@@ -1544,4 +1756,111 @@ async fn an_existing_sftp_tab_does_not_hide_a_temporary_hosts_promoted_transfer(
         workspace.read(cx).store().read(cx).host(host).is_none()
     })
     .await;
+}
+
+#[gpui_kit::test]
+async fn directory_follow_resumes_after_path_edit_loses_focus(cx: &mut TestAppContext) {
+    let terminals = Arc::new(DirectoryTerminals::default());
+    let (handle, workspace, _) = open_files_workspace_with_terminals(
+        cx,
+        Arc::new(FakeSftpProvider::default()),
+        terminals.clone(),
+    );
+    let web = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    let address = cx.update(|cx| {
+        workspace
+            .read(cx)
+            .store()
+            .read(cx)
+            .host(HostId(WEB_01))
+            .unwrap()
+            .address
+            .to_string()
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        terminals.outputs.lock().unwrap().len() == 2
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        window
+            .within(("remote-pane", web.0))
+            .click("remote-path", cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.input("/uncommitted", cx);
+        window.click(("terminal", INITIAL_WEB_TERMINAL), cx);
+    });
+    terminals.report(INITIAL_WEB_TERMINAL, &address, "/after-path-blur");
+    wait_for_path(cx, handle, web, "/after-path-blur").await;
+}
+
+#[gpui_kit::test]
+async fn directory_follow_waits_for_the_file_connection_to_reconnect(cx: &mut TestAppContext) {
+    let terminals = Arc::new(DirectoryTerminals::default());
+    let (handle, workspace, _) = open_files_workspace_with_terminals(
+        cx,
+        Arc::new(FakeSftpProvider::default()),
+        terminals.clone(),
+    );
+    let web = show_files(cx, handle, &workspace, INITIAL_WEB_TERMINAL, WEB_01).await;
+    let address = cx.update(|cx| {
+        workspace
+            .read(cx)
+            .store()
+            .read(cx)
+            .host(HostId(WEB_01))
+            .unwrap()
+            .address
+            .to_string()
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.click(("terminal", INITIAL_WEB_TERMINAL), cx);
+        window.dispatch_action(Box::new(DisconnectHost(HostId(WEB_01))), cx);
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .explorer(web)
+            .unwrap()
+            .read(cx)
+            .connection_state()
+            == ConnectionState::Disconnected
+            && terminals.outputs.lock().unwrap().len() == 1
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        window.click(("terminal", INITIAL_WEB_TERMINAL), cx);
+        window.dispatch_action(
+            Box::new(shellrs::app::ReconnectTerminal(RemoteTerminalId(
+                INITIAL_WEB_TERMINAL,
+            ))),
+            cx,
+        );
+    });
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, _| {
+        terminals.outputs.lock().unwrap().contains_key(&3)
+    })
+    .await;
+    terminals.report(3, &address, "/reported-while-sftp-disconnected");
+    cx.wait_for(handle.into(), Duration::from_secs(2), |_, cx| {
+        workspace
+            .read(cx)
+            .remote_terminal(RemoteTerminalId(INITIAL_WEB_TERMINAL))
+            .unwrap()
+            .read(cx)
+            .reported_directory(cx)
+            .is_some_and(|report| report.path() == "/reported-while-sftp-disconnected")
+    })
+    .await;
+    in_frame(cx, handle, |window, cx| {
+        let explorer = workspace.read(cx).explorer(web).unwrap().read(cx);
+        assert_eq!(explorer.connection_state(), ConnectionState::Disconnected);
+        assert_ne!(
+            explorer.remote().read(cx).path(),
+            "/reported-while-sftp-disconnected"
+        );
+        assert!(window.find("file-sidebar-reconnect").visible());
+        window.click("file-sidebar-reconnect", cx);
+    });
+    wait_for_path(cx, handle, web, "/reported-while-sftp-disconnected").await;
 }

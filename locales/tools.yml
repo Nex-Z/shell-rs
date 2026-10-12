@@ -286,3 +286,10 @@ tools.files.close_tab:
 tools.files.edit_path:
   zh-CN: 输入目录路径（Enter 前往，Esc 取消）
   en: Edit directory path (Enter to open, Esc to cancel)
+
+tools.files.cwd_reporting:
+  zh-CN: 跟随终端报告的目录
+  en: Following directory reports from the terminal
+tools.files.cwd_waiting:
+  zh-CN: 未收到目录报告，可手动浏览
+  en: No directory report received; browse manually

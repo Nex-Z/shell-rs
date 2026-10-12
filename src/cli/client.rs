@@ -789,6 +789,7 @@ mod tests {
             password_saved: None,
             route: RouteDetails::Direct,
             notes: String::new(),
+            bash_directory_tracking: false,
             os: None,
             temporary: false,
         }

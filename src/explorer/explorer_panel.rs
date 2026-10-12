@@ -97,6 +97,7 @@ pub struct ExplorerPanel {
     /// Embedded in the right sidebar: remote list and a compact queue.
     pub(super) sidebar: bool,
     sidebar_detached: bool,
+    directory_reporting: bool,
     /// The pane that held focus last, which takes it back on activation.
     last_remote: bool,
     /// Where the user put the divider between the panes, and the one above
@@ -257,6 +258,7 @@ impl ExplorerPanel {
             custom_title: None,
             sidebar: false,
             sidebar_detached: false,
+            directory_reporting: false,
             last_remote: true,
             panes_split: cx.new(|_| ResizableState::default()),
             queue_split: cx.new(|_| ResizableState::default()),
@@ -276,13 +278,37 @@ impl ExplorerPanel {
         cx.notify();
     }
 
+    pub fn set_directory_reporting(&mut self, reporting: bool, cx: &mut Context<Self>) {
+        if self.directory_reporting != reporting {
+            self.directory_reporting = reporting;
+            cx.notify();
+        }
+    }
+
+    /// Passive shell reports only browse the existing connection. They
+    /// never reconnect, approve an operation or change a queued destination.
+    pub fn follow_directory(
+        &mut self,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.state != ConnectionState::Connected || self.sidebar_configuration_changed(cx) {
+            return false;
+        }
+        if !self.remote.read(cx).editing_path && self.remote.read(cx).path() != path {
+            self.navigate(true, path.to_owned(), LoadIntent::Visit, window, cx);
+        }
+        true
+    }
+
     fn sidebar_configuration_changed(&self, cx: &App) -> bool {
         self.sidebar
             && !self
                 .store
                 .read(cx)
                 .login(self.host_id)
-                .is_some_and(|login| login == self.login)
+                .is_some_and(|login| login.same_connection_as(&self.login))
     }
 
     /// Work which keeps an unshown temporary host alive until its result
@@ -1324,7 +1350,12 @@ impl ExplorerPanel {
                         .py_1()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(t!("tools.files.drop_hint")),
+                        .child(t!("tools.files.drop_hint"))
+                        .child(div().child(if self.directory_reporting {
+                            t!("tools.files.cwd_reporting")
+                        } else {
+                            t!("tools.files.cwd_waiting")
+                        })),
                 )
             })
     }

@@ -1,4 +1,5 @@
 //! Shared SSH connection service and remote terminal adapter.
+mod bash_integration;
 mod connection;
 mod exec;
 mod latency;

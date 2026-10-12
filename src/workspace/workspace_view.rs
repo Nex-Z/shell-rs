@@ -166,6 +166,9 @@ pub struct Workspace {
     pub(super) explorers: HashMap<ExplorerId, Entity<ExplorerPanel>>,
     /// One lazily opened file sidebar per host, separate from its SFTP tabs.
     pub(super) file_sidebars: HashMap<HostId, ExplorerId>,
+    /// Last report consumed by each host's sidebar. A manual navigation is
+    /// not undone by unrelated focus, latency or store notifications.
+    pub(super) file_directories: HashMap<HostId, (RemoteTerminalId, u64, u64)>,
     pub(super) local_terminals: HashMap<LocalTerminalId, Entity<LocalTerminalPanel>>,
     /// The settings tab, while it is open. There is only ever one.
     settings_tab: Option<Entity<SettingsPanel>>,
@@ -541,6 +544,7 @@ impl Workspace {
             terminals,
             explorers: HashMap::new(),
             file_sidebars: HashMap::new(),
+            file_directories: HashMap::new(),
             local_terminals: HashMap::new(),
             settings_tab: None,
             settings,
@@ -661,6 +665,7 @@ impl Workspace {
         let Some(id) = self.file_sidebars.remove(&host) else {
             return;
         };
+        self.file_directories.remove(&host);
         let Some(panel) = self.explorers.get(&id).cloned() else {
             return;
         };
@@ -1559,6 +1564,7 @@ impl Workspace {
             );
             if self.file_sidebars.values().any(|sidebar| *sidebar == id) {
                 self.file_sidebars.retain(|_, sidebar| *sidebar != id);
+                self.file_directories.remove(&panel.read(cx).host_id());
                 self.tools
                     .update(cx, |tools, cx| tools.forget_files(id, window, cx));
                 // This explorer is embedded, so no Dock removal calls its
@@ -2419,6 +2425,9 @@ fn new_terminal_panel(
                 let (host_id, os) = (*host_id, *os);
                 this.store
                     .update(cx, |store, cx| store.set_host_os(host_id, Some(os), cx));
+            }
+            TerminalPanelEvent::DirectoryChanged(_, _, _) => {
+                this.sync_tool_sidebar(window, cx);
             }
             TerminalPanelEvent::Notice(terminal_id, notice) => {
                 this.on_terminal_notice(CenterTab::Terminal(*terminal_id), notice, window, cx)

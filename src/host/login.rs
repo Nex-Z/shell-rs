@@ -25,9 +25,8 @@ pub enum LoginMethod {
     Agent,
 }
 
-/// Everything a login needs. Two equal values log in the same way, which is
-/// how the store tells whether an edit has to reconnect a host: it holds
-/// nothing that only changes what the user sees, such as a name.
+/// Everything a login and terminal startup need. `same_connection_as`
+/// compares connection identity without next-terminal shell preferences.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HostLogin {
@@ -50,6 +49,8 @@ pub struct HostLogin {
     /// session per connection and ends it when another channel comes and
     /// goes, as Xshell and OpenSSH never make it do.
     pub shell_only: bool,
+    /// Enable Bash directory reporting for the next terminal only.
+    pub bash_directory_tracking: bool,
 }
 
 /// How a connection reaches a host, with every jump host's login looked up.
@@ -156,6 +157,7 @@ impl HostLogin {
             key_path: None,
             route: LoginRoute::Direct,
             shell_only: false,
+            bash_directory_tracking: false,
         }
     }
 
@@ -185,7 +187,30 @@ impl HostLogin {
             password,
             route: LoginRoute::Direct,
             shell_only: false,
+            bash_directory_tracking: false,
         }
+    }
+
+    pub fn with_bash_directory_tracking(mut self, enabled: bool) -> Self {
+        self.bash_directory_tracking = enabled;
+        self
+    }
+
+    /// Connection identity excludes next-terminal shell preferences, including
+    /// those of jump hosts, whose shells this connection does not start.
+    pub fn same_connection_as(&self, other: &Self) -> bool {
+        fn connection_only(mut login: HostLogin) -> HostLogin {
+            login.bash_directory_tracking = false;
+            if let LoginRoute::Jump(hops) = &mut login.route {
+                for hop in hops {
+                    if let JumpLogin::Host { login, .. } = hop {
+                        **login = connection_only((**login).clone());
+                    }
+                }
+            }
+            login
+        }
+        connection_only(self.clone()) == connection_only(other.clone())
     }
 
     /// The same login, reaching the host by `route`.
@@ -208,6 +233,7 @@ impl HostLogin {
                 host.auth,
             ),
         }
+        .with_bash_directory_tracking(host.bash_directory_tracking)
     }
 
     /// `user@host:port`, for messages and as the key of resumable transfers.

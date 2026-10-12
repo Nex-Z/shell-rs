@@ -649,6 +649,47 @@ impl Workspace {
         self.sync_tool_sidebar(window, cx);
     }
 
+    fn follow_file_directory(
+        &mut self,
+        terminal: &ToolTerminal,
+        files: &Entity<crate::explorer::ExplorerPanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.terminals.get(&terminal.id) else {
+            return;
+        };
+        let panel = panel.read(cx);
+        let report = panel.reported_directory(cx);
+        let generation = panel.connection_generation(cx);
+        let revision = panel.directory_revision(cx);
+        let address = self
+            .store
+            .read(cx)
+            .host(terminal.host)
+            .map(|host| host.address.clone());
+        let report = report.filter(|report| {
+            address
+                .as_ref()
+                .is_some_and(|address| directory_host_matches(report.authority(), address))
+        });
+        files.update(cx, |files, cx| {
+            files.set_directory_reporting(report.is_some(), cx)
+        });
+        let Some(report) = report else { return };
+        let key = (terminal.id, generation, revision);
+        if self.file_directories.get(&terminal.host) == Some(&key) {
+            return;
+        }
+        // Consume even while the user edits the path. An old report must
+        // not later overwrite that explicit navigation when focus changes.
+        if files.update(cx, |files, cx| {
+            files.follow_directory(report.path(), window, cx)
+        }) {
+            self.file_directories.insert(terminal.host, key);
+        }
+    }
+
     /// Point the sidebar at the SSH terminal in front, and open it if one is,
     /// its tool works on the host and the sidebar is wanted; close it
     /// otherwise. Also when the host turns out to run something else.
@@ -663,6 +704,9 @@ impl Workspace {
         } else {
             None
         };
+        if let (Some(terminal), Some(files)) = (&terminal, &files) {
+            self.follow_file_directory(terminal, files, window, cx);
+        }
         self.tools.update(cx, |tools, cx| {
             tools.set_files(files, window, cx);
             tools.set_terminal(terminal, open, cx);
@@ -855,5 +899,24 @@ fn service_failed(name: &str, command: ServiceCommand, why: &str) -> SharedStrin
         ServiceCommand::Restart => t!("tools.service.restart.failed", name = name, error = why),
         ServiceCommand::Enable => t!("tools.service.enable.failed", name = name, error = why),
         ServiceCommand::Disable => t!("tools.service.disable.failed", name = name, error = why),
+    }
+}
+
+/// OSC 7 must name the connected endpoint, never a nested SSH host. DNS
+/// spelling is case-insensitive; IP addresses compare in normalized form.
+fn directory_host_matches(authority: &str, address: &str) -> bool {
+    if authority.is_empty() || address.is_empty() {
+        return false;
+    }
+    let ip = |host: &str| host.trim_matches(['[', ']']).parse::<std::net::IpAddr>();
+    match (ip(authority), ip(address)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => match (
+            url::Host::parse(authority.trim_end_matches('.')),
+            url::Host::parse(address.trim_end_matches('.')),
+        ) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => false,
+        },
     }
 }

@@ -4,6 +4,7 @@ use std::time::Duration;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, IndexPath, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     combobox::{Combobox, ComboboxEvent, ComboboxState},
     dialog::{Cancel, Confirm, DialogButtonProps, DialogFooter},
     form::{Field, Form},
@@ -198,6 +199,7 @@ pub struct HostForm {
     /// The proxy's password.
     proxy_secret: Entity<SecretFields>,
     notes: Entity<TextareaState>,
+    bash_directory_tracking: bool,
     testing_connection: bool,
     /// Logs in with the form's current values for 「测试连接」.
     tester: SharedConnectionTester,
@@ -423,6 +425,7 @@ impl HostForm {
             proxy_user,
             proxy_secret,
             notes,
+            bash_directory_tracking: draft.bash_directory_tracking,
             testing_connection: false,
             tester,
             editing_connected,
@@ -738,7 +741,10 @@ impl HostForm {
             _ => None,
         };
         let notes = self.notes.read(cx).value().trim().to_string();
-        let draft = draft.with_route(route).with_notes(notes);
+        let draft = draft
+            .with_route(route)
+            .with_notes(notes)
+            .with_bash_directory_tracking(self.bash_directory_tracking);
 
         let editing = self.editing;
         self.store.update(cx, |store, cx| {
@@ -1222,6 +1228,23 @@ impl Render for HostForm {
                     .child(Select::new(&self.group).small()),
             )
             .child(self.route_field(cx))
+            .child(
+                Field::new()
+                    .label(t!("host.dialog.advanced"))
+                    .col_span(4)
+                    .description(t!("host.dialog.bash_directory_tracking_note"))
+                    .child(
+                        Checkbox::new("host-bash-directory-tracking")
+                            .label(t!("host.dialog.bash_directory_tracking"))
+                            .tooltip(t!("host.dialog.bash_directory_tracking_tooltip"))
+                            .checked(self.bash_directory_tracking)
+                            .small()
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.bash_directory_tracking = *checked;
+                                cx.notify();
+                            })),
+                    ),
+            )
             .child(
                 Field::new()
                     .label(t!("host.dialog.notes"))

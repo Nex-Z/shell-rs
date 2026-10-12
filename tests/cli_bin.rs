@@ -313,6 +313,7 @@ fn a_host_described_on_stdin_reaches_the_app_and_comes_back_saved() {
                     };
                     let password = fields.password.clone().flatten();
                     reply.send(Ok(Reply::Host(HostDetails {
+                        bash_directory_tracking: false,
                         id: "Jwg5rHvXCxw89paM".into(),
                         name: fields.name.clone().unwrap_or_default(),
                         group: fields.group.clone().flatten(),

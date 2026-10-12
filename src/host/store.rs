@@ -1113,7 +1113,10 @@ impl HostStore {
     /// it did in `before`, so its connections reconnect.
     fn emit_changed_logins(&self, before: Vec<(HostId, HostLogin)>, cx: &mut Context<Self>) {
         for (id, login) in before {
-            if self.login(id).is_some_and(|now| now != login) {
+            if self
+                .login(id)
+                .is_some_and(|now| !now.same_connection_as(&login))
+            {
                 cx.emit(HostStoreEvent::ConnectionSettingsChanged(id));
             }
         }
@@ -2459,6 +2462,39 @@ mod tests {
         assert_eq!(store.host(id).unwrap().notes.as_ref(), "只读副本，勿写");
         let copy = store.duplicate_unnotified(id).unwrap();
         assert_eq!(store.host(copy).unwrap().notes.as_ref(), "只读副本，勿写");
+    }
+
+    #[gpui_kit::test]
+    fn bash_directory_tracking_waits_for_the_next_connection(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        use std::{cell::RefCell, rc::Rc};
+        let mut store = HostStore::empty();
+        let id = store.insert_unnotified(draft("host", None));
+        let behind = store.insert_unnotified(draft("behind", None).with_route(jump_through(&[id])));
+        let store = cx.new(|_| store);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let events = events.clone();
+            cx.subscribe(&store, move |_, event: &HostStoreEvent, _| {
+                events.borrow_mut().push(event.clone())
+            })
+        });
+        store.update(cx, |store, cx| {
+            store.update(
+                id,
+                draft("host", None).with_bash_directory_tracking(true),
+                cx,
+            );
+            assert!(store.login(id).unwrap().bash_directory_tracking);
+            assert!(!store.login(behind).unwrap().bash_directory_tracking);
+            let copy = store.duplicate_unnotified(id).unwrap();
+            assert!(store.host(copy).unwrap().draft().bash_directory_tracking);
+        });
+        cx.run_until_parked();
+        assert!(
+            events.borrow().is_empty(),
+            "shell preferences must not reconnect any host"
+        );
     }
 
     #[gpui_kit::test]

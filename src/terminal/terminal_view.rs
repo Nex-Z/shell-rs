@@ -33,9 +33,9 @@ use super::mouse::{self, MouseReport, ReportButton, ReportKind};
 use super::scrollbar::ScrollbackHandle;
 use super::search::SearchMark;
 use super::{
-    RightClick, SearchDirection, SharedTerminalTransportFactory, TerminalColors, TerminalEngine,
-    TerminalEvent, TerminalFont, TerminalInteraction, TerminalLifecycle, TerminalSize,
-    TerminalSnapshot, TerminalStatus, TerminalTheme,
+    ReportedDirectory, RightClick, SearchDirection, SharedTerminalTransportFactory, TerminalColors,
+    TerminalEngine, TerminalEvent, TerminalFont, TerminalInteraction, TerminalLifecycle,
+    TerminalSize, TerminalSnapshot, TerminalStatus, TerminalTheme,
 };
 
 pub const TERMINAL_KEY_CONTEXT: &str = "Terminal";
@@ -393,6 +393,14 @@ impl TerminalView {
     /// Which connection the terminal is on: counts up with every reconnect.
     pub fn generation(&self, cx: &App) -> u64 {
         self.engine.read(cx).generation()
+    }
+
+    pub fn directory_revision(&self, cx: &App) -> u64 {
+        self.engine.read(cx).directory_revision()
+    }
+
+    pub fn reported_directory(&self, cx: &App) -> Option<ReportedDirectory> {
+        self.engine.read(cx).reported_directory().cloned()
     }
 
     /// Run `command` beside the shell, on this terminal's own connection;

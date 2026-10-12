@@ -972,3 +972,58 @@ async fn a_dialogs_choices_are_equal_segments_of_one_track(cx: &mut TestAppConte
         assert!(window.find("host-credential").visible());
     });
 }
+
+#[gpui_kit::test]
+async fn bash_directory_tracking_is_opt_in_saved_and_cancelable(cx: &mut TestAppContext) {
+    let (handle, workspace) = open_workspace_with_store(cx, HostStore::empty());
+    in_frame(cx, handle, |window, cx| window.click("new-host-panel", cx));
+    in_frame(cx, handle, |window, cx| {
+        assert_eq!(
+            window.find("host-bash-directory-tracking").checked(),
+            Some(false)
+        );
+        window.click("host-name", cx);
+        window.input("Bash tracking test", cx);
+        window.click("host-address", cx);
+        window.input("example.com", cx);
+        window.click("host-bash-directory-tracking", cx);
+        window.click("commit", cx);
+    });
+    wait_for_dialog_to_close(cx, handle).await;
+    let id = cx.update(|cx| {
+        let host = &workspace.read(cx).store().read(cx).hosts()[0];
+        assert!(host.bash_directory_tracking);
+        host.id
+    });
+    for save in [false, true] {
+        in_frame(cx, handle, |window, cx| {
+            window.click("host-search", cx);
+            window.dispatch_action(Box::new(EditHost(id)), cx);
+        });
+        in_frame(cx, handle, |window, cx| {
+            assert_eq!(
+                window.find("host-bash-directory-tracking").checked(),
+                Some(true)
+            );
+            window.click("host-bash-directory-tracking", cx);
+            if save {
+                window.click("commit", cx);
+            } else {
+                window.press("escape", cx);
+            }
+        });
+        wait_for_dialog_to_close(cx, handle).await;
+        cx.update(|cx| {
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .store()
+                    .read(cx)
+                    .host(id)
+                    .unwrap()
+                    .bash_directory_tracking,
+                !save
+            )
+        });
+    }
+}
