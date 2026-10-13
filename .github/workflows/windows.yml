@@ -22,6 +22,9 @@ on:
       - "src/main.rs"
       - "src/bin/**"
       - "src/ssh/connection.rs"
+      - "src/ssh/probe.rs"
+      - "src/ssh/transport.rs"
+      - "tests/ui/connection.rs"
       - "src/sftp/download.rs"
       - "src/sftp/model.rs"
       - "src/sftp/upload.rs"
@@ -54,7 +57,10 @@ jobs:
       # In case aws-lc-sys wants to assemble rather than use its prebuilt
       # objects.
       - uses: ilammy/setup-nasm@v1
+      - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
+      - run: "cargo test --locked --lib ssh::"
+      - run: "cargo test --locked --test ui connection::"
       - run: "cargo test --lib cli::"
       - run: "cargo test --lib update::"
       - run: "cargo test --lib sftp::tests::local_listing"

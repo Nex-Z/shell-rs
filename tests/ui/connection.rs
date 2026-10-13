@@ -645,6 +645,55 @@ async fn connecting_marks_the_host_with_the_host_operating_system(cx: &mut TestA
 }
 
 #[gpui_kit::test]
+async fn a_windows_host_updates_the_tree_tab_and_recent_marks(cx: &mut TestAppContext) {
+    let (store, id) = one_host_store(AuthKind::Password);
+    let factory = Arc::new(FakeTerminalFactory::reports_os(HostOs::Windows));
+    let (handle, workspace) = open_workspace_with_remote_factory(cx, store, factory);
+    let terminal = 1_u64;
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(("host-os", id.0)).label(), Some("未探测到系统"));
+        window
+            .within("host-tree")
+            .double_click(("host-row", id.0), cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        window.find(("host-os", id.0)).label() == Some("Windows")
+            && window
+                .try_find(("terminal-tab-os", terminal))
+                .is_some_and(|mark| mark.label() == Some("Windows"))
+    })
+    .await;
+    cx.update(|cx| {
+        assert_eq!(
+            workspace.read(cx).store().read(cx).host(id).unwrap().os,
+            Some(HostOs::Windows)
+        );
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .within(("terminal-tab", terminal))
+                .try_find("connection-status")
+                .is_none()
+        );
+        window.click(("close-terminal", terminal), cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(2), |window, cx| {
+        window.render_frame(cx);
+        window
+            .try_find(("recent-host-os", id.0))
+            .is_some_and(|mark| mark.label() == Some("Windows"))
+    })
+    .await;
+}
+
+#[gpui_kit::test]
 async fn the_tab_bar_shows_the_connection_latency_while_it_runs(cx: &mut TestAppContext) {
     let (store, id) = one_host_store(AuthKind::Password);
     let factory = Arc::new(FakeTerminalFactory::reports_latency(Latency::Measured(
