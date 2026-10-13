@@ -37,6 +37,11 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
+      - "src/ssh/transport.rs"
+      - "src/ssh/bash_integration.rs"
+      - "src/host/host_dialog.rs"
+      - "tests/ui/host_dialog.rs"
+      - ".github/workflows/windows.yml"
   workflow_dispatch:
 
 jobs:
@@ -60,3 +65,6 @@ jobs:
       - run: "cargo test --lib sftp::tests::local_listing"
       - run: "cargo test --lib terminal::local_shell"
       - run: cargo test --test cli_bin
+      - run: "cargo test --locked --lib ssh::"
+      - run: "cargo test --locked --test ui bash_directory_tracking"
+      - run: "cargo test --locked --test ui file_sidebar::"

@@ -17,6 +17,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".github/workflows/shells.yml"
+      - "src/ssh/transport.rs"
+      - "src/ssh/bash_integration.rs"
   workflow_dispatch:
 
 jobs:
@@ -45,3 +47,5 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --lib terminal::run -- --include-ignored
+      - run: "cargo test --locked --lib ssh::bash_integration"
+      - run: "cargo test --locked --lib ssh::transport::tests::bash_guard"
