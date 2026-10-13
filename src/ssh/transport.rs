@@ -113,6 +113,45 @@ impl TerminalTransport for SshTerminalTransport {
     }
 }
 
+/// The probe never uses the interactive channel or updates the saved OS/option.
+async fn bash_capability(
+    handle: &SshHandle,
+    shutdown: &mut watch::Receiver<bool>,
+    deadline: Duration,
+) -> Result<bool> {
+    if *shutdown.borrow() {
+        bail!(t!("ssh.connect.cancelled"));
+    }
+    let mut channel = None;
+    let result = tokio::select! {
+        _ = shutdown.changed() => Err(anyhow!(t!("ssh.connect.cancelled"))),
+        result = tokio::time::timeout(deadline, async {
+            channel = Some(handle.channel_open_session().await?);
+            let channel = channel.as_mut().unwrap();
+            channel.exec(true, super::bash_integration::capability_command()).await?;
+            let mut output = Vec::new();
+            let mut success = false;
+            while let Some(message) = channel.wait().await {
+                match message {
+                    ChannelMsg::Data { data } => {
+                        if output.len() + data.len() > 1024 { return Ok(false); }
+                        output.extend_from_slice(&data);
+                    }
+                    ChannelMsg::ExitStatus { exit_status } => success = exit_status == 0,
+                    ChannelMsg::Failure => return Ok(false),
+                    ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+            Ok::<_, anyhow::Error>(success && output == b"SHELLRS_BASH_READY\n")
+        }) => Ok(result.is_ok_and(|result| result.unwrap_or(false))),
+    };
+    if let Some(channel) = channel {
+        let _ = tokio::time::timeout(Duration::from_millis(100), channel.close()).await;
+    }
+    result
+}
+
 impl SshTerminalTransport {
     async fn run_async(
         &self,
@@ -160,6 +199,10 @@ impl SshTerminalTransport {
             .await
             .map_err(|error| anyhow!(describe_login_error(&error)))?;
         let mut shutdown = broker.shutdown_receiver();
+        // A saved OS label is only presentation metadata. Verify capability on
+        // every enhanced connection, including reconnects and old saved hosts.
+        let use_bash = self.bash_directory_tracking
+            && bash_capability(&handle, &mut shutdown, Duration::from_secs(2)).await?;
         let mut channel = tokio::select! {
             result = handle.channel_open_session() => {
                 result.map_err(|_| anyhow!(t!("ssh.terminal.session_failed")))?
@@ -178,7 +221,7 @@ impl SshTerminalTransport {
             ) => result.map_err(|_| anyhow!(t!("ssh.terminal.pty_refused")))?,
             _ = shutdown.changed() => bail!(t!("ssh.connect.cancelled")),
         }
-        if self.bash_directory_tracking {
+        if use_bash {
             let command = super::bash_integration::command(&self.directory_authority);
             tokio::select! {
                 result = channel.exec(true, command) => {
@@ -198,6 +241,15 @@ impl SshTerminalTransport {
             .send(TerminalTransportEvent::Started)
             .await
             .map_err(|_| anyhow!(t!("ssh.terminal.tab_closed")))?;
+
+        if self.bash_directory_tracking && !use_bash {
+            events
+                .send(TerminalTransportEvent::Output(
+                    format!("[ShellRS] {}\r\n", t!("ssh.terminal.bash_unavailable")).into_bytes(),
+                ))
+                .await
+                .map_err(|_| anyhow!(t!("ssh.terminal.tab_closed")))?;
+        }
 
         // Ask what the host is running on a channel of its own, then let the
         // loop below collect the answer alongside the shell's output. Opening
@@ -417,6 +469,7 @@ mod tests {
 
     #[derive(Default)]
     struct ServerState {
+        shells: usize,
         pty: Option<(String, u32, u32, u32, u32)>,
         resize: Option<(u32, u32, u32, u32)>,
         input: Vec<u8>,
@@ -605,6 +658,7 @@ mod tests {
             channel: russh::ChannelId,
             session: &mut server::Session,
         ) -> Result<(), Self::Error> {
+            self.state.lock().unwrap().shells += 1;
             session.channel_success(channel)?;
             session.data(channel, &b"ready\r\n"[..])?;
             Ok(())
@@ -624,6 +678,36 @@ mod tests {
                 .unwrap_or_else(|error| error.into_inner())
                 .execs
                 .push(String::from_utf8_lossy(command).into_owned());
+            if command == super::super::bash_integration::capability_command().as_bytes() {
+                match (self.probe_reply)("bash-capability") {
+                    Some("hang") => {
+                        session.channel_success(channel)?;
+                    }
+                    Some("ready") => {
+                        session.channel_success(channel)?;
+                        session.data(channel, b"SHELLRS_BASH_READY\n".to_vec())?;
+                        session.eof(channel)?;
+                        session.exit_status_request(channel, 0)?;
+                        session.close(channel)?;
+                    }
+                    Some("bad-status") => {
+                        session.channel_success(channel)?;
+                        session.data(channel, b"SHELLRS_BASH_READY\n".to_vec())?;
+                        session.exit_status_request(channel, 1)?;
+                        session.close(channel)?;
+                    }
+                    _ => {
+                        session.channel_failure(channel)?;
+                        session.close(channel)?;
+                    }
+                }
+                return Ok(());
+            }
+            if String::from_utf8_lossy(command).starts_with("exec bash ") {
+                session.channel_success(channel)?;
+                session.data(channel, b"ready\r\n".to_vec())?;
+                return Ok(());
+            }
             session.channel_success(channel)?;
             if command == CLI_COMMAND.as_bytes() {
                 session.data(channel, b"out".to_vec())?;
@@ -928,6 +1012,157 @@ mod tests {
             .unwrap();
         worker.join().unwrap();
         report
+    }
+
+    fn bash_reply(_: &str) -> Option<&'static str> {
+        Some("ready")
+    }
+    fn hanging_bash_reply(_: &str) -> Option<&'static str> {
+        Some("hang")
+    }
+    fn bad_bash_reply(_: &str) -> Option<&'static str> {
+        Some("bad-status")
+    }
+
+    #[test]
+    fn bash_guard_preserves_old_windows_unknown_and_stale_unix_options() {
+        for os in [Some(HostOs::Windows), None, Some(HostOs::Debian)] {
+            let server = start_server(TestAuth::Password).expect("loopback required");
+            let directory = tempfile::tempdir().unwrap();
+            let mut host = password_host(server.port);
+            host.os = os;
+            host.bash_directory_tracking = true;
+            connect_then_shutdown(
+                host.clone(),
+                &directory.path().join("known_hosts"),
+                trust_and_type_password,
+            );
+            let state = server.state.lock().unwrap();
+            assert_eq!(state.shells, 1);
+            assert_eq!(
+                state
+                    .execs
+                    .iter()
+                    .filter(|c| c.starts_with("exec bash "))
+                    .count(),
+                1
+            );
+            assert!(host.bash_directory_tracking);
+            assert_eq!(host.os, os);
+        }
+    }
+
+    #[test]
+    fn bash_guard_requires_successful_capability_on_each_reconnect() {
+        let server =
+            start_server_replying(TestAuth::Password, bash_reply).expect("loopback required");
+        let directory = tempfile::tempdir().unwrap();
+        let mut host = password_host(server.port);
+        host.bash_directory_tracking = true;
+        for _ in 0..2 {
+            connect_then_shutdown(
+                host.clone(),
+                &directory.path().join("known_hosts"),
+                trust_and_type_password,
+            );
+        }
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.shells, 0);
+        let probe = super::super::bash_integration::capability_command();
+        assert_eq!(state.execs.iter().filter(|c| **c == probe).count(), 2);
+        assert_eq!(
+            state
+                .execs
+                .iter()
+                .filter(|c| c.starts_with("exec bash ") && **c != probe)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn bash_guard_timeout_and_failure_fall_back_without_replacing_shell() {
+        for reply in [
+            hanging_bash_reply as fn(&str) -> Option<&'static str>,
+            bad_bash_reply,
+        ] {
+            let server =
+                start_server_replying(TestAuth::Password, reply).expect("loopback required");
+            let directory = tempfile::tempdir().unwrap();
+            let mut host = password_host(server.port);
+            host.bash_directory_tracking = true;
+            let start = std::time::Instant::now();
+            connect_then_shutdown(
+                host,
+                &directory.path().join("known_hosts"),
+                trust_and_type_password,
+            );
+            assert!(start.elapsed() < Duration::from_secs(5));
+            assert_eq!(server.state.lock().unwrap().shells, 1);
+        }
+    }
+
+    #[test]
+    fn bash_guard_opt_out_does_not_probe() {
+        let server = start_server_replying(TestAuth::Password, hanging_bash_reply)
+            .expect("loopback required");
+        let directory = tempfile::tempdir().unwrap();
+        connect_then_shutdown(
+            password_host(server.port),
+            &directory.path().join("known_hosts"),
+            trust_and_type_password,
+        );
+        let state = server.state.lock().unwrap();
+        assert_eq!(state.shells, 1);
+        assert!(!state.execs.iter().any(|c| c.starts_with("exec bash ")));
+    }
+
+    #[test]
+    fn bash_guard_cancellation_stops_before_opening_main_shell() {
+        let server = start_server_replying(TestAuth::Password, hanging_bash_reply)
+            .expect("loopback required");
+        let directory = tempfile::tempdir().unwrap();
+        let mut host = password_host(server.port);
+        host.bash_directory_tracking = true;
+        let provider = SshTerminalTransportProvider::with_connector(SshConnector::new(
+            directory.path().join("known_hosts"),
+            Arc::new(NoSecretStore),
+        ));
+        let factory = provider.factory_for(&HostLogin::of(&host, None));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = async_channel::unbounded();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            done_tx
+                .send(
+                    factory
+                        .create()
+                        .run(TerminalSize::DEFAULT, command_rx, event_tx),
+                )
+                .unwrap();
+        });
+        let start = std::time::Instant::now();
+        while server.state.lock().unwrap().execs.is_empty() {
+            if let Ok(TerminalTransportEvent::Prompt(prompt)) = event_rx.try_recv() {
+                command_tx
+                    .send(TerminalTransportCommand::PromptReply {
+                        request_id: prompt.request_id(),
+                        reply: trust_and_type_password(prompt.kind()),
+                    })
+                    .unwrap();
+            }
+            assert!(start.elapsed() < Duration::from_secs(3));
+            thread::sleep(Duration::from_millis(5));
+        }
+        command_tx.send(TerminalTransportCommand::Shutdown).unwrap();
+        assert!(
+            done_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_err()
+        );
+        worker.join().unwrap();
+        assert_eq!(server.state.lock().unwrap().shells, 0);
     }
 
     #[test]

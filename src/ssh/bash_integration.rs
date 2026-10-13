@@ -6,6 +6,12 @@ fn quote_word(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\"'\"'"))
 }
 
+/// Read-only check on an independent channel, before replacing the login shell.
+pub(super) fn capability_command() -> String {
+    let check = r#"[[ "$OSTYPE" != msys* && "$OSTYPE" != cygwin* && "$OSTYPE" != mingw* && "$OSTYPE" != win* && -r <(printf ok) ]] && printf '%s\n' SHELLRS_BASH_READY"#;
+    format!("exec bash --noprofile --norc -c {}", quote_word(check))
+}
+
 /// Start an interactive Bash with an in-memory rc file. Login files are
 /// sourced in Bash's usual order before adding our prompt hook. This remains
 /// opt-in: forced commands and unusual login-shell checks may not support it.

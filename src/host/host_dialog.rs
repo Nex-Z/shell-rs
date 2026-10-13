@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, IndexPath, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, IndexPath, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     combobox::{Combobox, ComboboxEvent, ComboboxState},
@@ -27,7 +27,8 @@ use crate::i18n::{t, tn};
 use super::secret_fields::SecretFields;
 use super::{
     AuthKind, Credential, CredentialId, CredentialKind, DEFAULT_USER, GroupId, Host, HostDraft,
-    HostDraftError, HostId, HostLogin, HostStore, ProxyKind, ProxySettings, Route, group_options,
+    HostDraftError, HostId, HostLogin, HostOs, HostStore, ProxyKind, ProxySettings, Route,
+    group_options,
 };
 pub use crate::shared::DeleteHandler;
 use crate::shared::{
@@ -374,6 +375,9 @@ impl HostForm {
         });
 
         let subscriptions = vec![
+            cx.observe(&store, |_, _, cx| cx.notify()),
+            cx.observe(&address, |_, _, cx| cx.notify()),
+            cx.observe(&port, |_, _, cx| cx.notify()),
             cx.observe(&credential, |_, _, cx| cx.notify()),
             cx.observe(&fields, |_, _, cx| cx.notify()),
             cx.subscribe_in(
@@ -1159,6 +1163,15 @@ fn available_jump_hosts(hosts: &[JumpHost], hops: &[Option<HostId>]) -> Vec<Jump
 
 impl Render for HostForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let windows_host = self
+            .editing
+            .and_then(|id| self.store.read(cx).host(id))
+            .is_some_and(|host| {
+                host.os == Some(HostOs::Windows)
+                    && self.endpoint(cx).is_ok_and(|(address, port)| {
+                        address == host.address.as_ref() && port == host.port
+                    })
+            });
         let source = self.source;
         let keychain = self.fields.read(cx).keychain_available();
         let secret_note = if keychain {
@@ -1232,12 +1245,17 @@ impl Render for HostForm {
                 Field::new()
                     .label(t!("host.dialog.advanced"))
                     .col_span(4)
-                    .description(t!("host.dialog.bash_directory_tracking_note"))
+                    .description(if windows_host {
+                        t!("host.dialog.bash_directory_tracking_windows")
+                    } else {
+                        t!("host.dialog.bash_directory_tracking_note")
+                    })
                     .child(
                         Checkbox::new("host-bash-directory-tracking")
                             .label(t!("host.dialog.bash_directory_tracking"))
                             .tooltip(t!("host.dialog.bash_directory_tracking_tooltip"))
                             .checked(self.bash_directory_tracking)
+                            .disabled(windows_host)
                             .small()
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {
                                 this.bash_directory_tracking = *checked;

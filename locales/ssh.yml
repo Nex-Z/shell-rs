@@ -367,3 +367,7 @@ ssh.exec.saved_passphrase_rejected:
 ssh.exec.keyboard_interactive:
   zh-CN: 服务器在键盘交互式认证中提出了密码以外的问题（如验证码），外部 CLI 无法回答
   en: The server asks keyboard-interactive questions besides the password (such as a verification code), which the external CLI can’t answer
+
+ssh.terminal.bash_unavailable:
+  zh-CN: 未确认远端支持 Bash 目录跟随增强，已使用普通 shell。
+  en: Bash directory tracking could not be verified. Using the ordinary shell.

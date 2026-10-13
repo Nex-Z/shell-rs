@@ -1027,3 +1027,80 @@ async fn bash_directory_tracking_is_opt_in_saved_and_cancelable(cx: &mut TestApp
         });
     }
 }
+
+#[gpui_kit::test]
+async fn bash_directory_tracking_windows_keeps_the_saved_option(cx: &mut TestAppContext) {
+    let (mut store, id) = one_host_store(AuthKind::Password);
+    store.set_host_os_unnotified(id, Some(HostOs::Windows));
+    let (handle, workspace) = open_workspace_with_store(cx, store);
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(EditHost(id)), cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.click("host-bash-directory-tracking", cx);
+        assert_eq!(
+            window.find("host-bash-directory-tracking").checked(),
+            Some(false)
+        );
+        window.click("host-address", cx);
+        window.press("ctrl-a", cx);
+        window.input("different.example", cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.click("host-bash-directory-tracking", cx);
+        window.click("commit", cx);
+    });
+    wait_for_dialog_to_close(cx, handle).await;
+    cx.update(|cx| {
+        assert!(
+            workspace
+                .read(cx)
+                .store()
+                .read(cx)
+                .host(id)
+                .unwrap()
+                .bash_directory_tracking
+        )
+    });
+}
+
+#[gpui_kit::test]
+async fn bash_directory_tracking_old_windows_checked_option_is_preserved(cx: &mut TestAppContext) {
+    let mut store = HostStore::empty();
+    let id = store.insert_unnotified(
+        HostDraft::new(
+            "windows",
+            "example.test",
+            22,
+            "tester",
+            AuthKind::Password,
+            None,
+        )
+        .with_bash_directory_tracking(true),
+    );
+    store.set_host_os_unnotified(id, Some(HostOs::Windows));
+    let (handle, workspace) = open_workspace_with_store(cx, store);
+    in_frame(cx, handle, |window, cx| {
+        window.dispatch_action(Box::new(EditHost(id)), cx);
+    });
+    in_frame(cx, handle, |window, cx| {
+        window.click("host-bash-directory-tracking", cx);
+        assert_eq!(
+            window.find("host-bash-directory-tracking").checked(),
+            Some(true)
+        );
+        window.click("commit", cx);
+    });
+    wait_for_dialog_to_close(cx, handle).await;
+    cx.update(|cx| {
+        assert!(
+            workspace
+                .read(cx)
+                .store()
+                .read(cx)
+                .host(id)
+                .unwrap()
+                .bash_directory_tracking
+        )
+    });
+}
