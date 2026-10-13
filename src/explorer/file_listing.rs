@@ -1,9 +1,9 @@
 use crate::app::ExplorerDispatch as _;
-use crate::app::{CatalogIcon, ExplorerAction, ExplorerCommand};
+use crate::app::{ExplorerAction, ExplorerCommand};
 use crate::i18n::{t, tn};
 use crate::sftp::TransferDirection;
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, h_flex,
+    ActiveTheme as _, h_flex,
     table::{Column, ColumnSort, TableDelegate, TableState},
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -16,7 +16,7 @@ use std::{
 };
 
 use super::{
-    ClickMode, ExplorerId, FileEntry, FileKind, FilePane, FileSizeFormat, PaneSide, Selection,
+    ClickMode, ExplorerId, FileEntry, FileIcon, FilePane, FileSizeFormat, PaneSide, Selection,
     child_path, format_changed, format_rights,
 };
 
@@ -433,18 +433,6 @@ impl FileListing {
     }
 }
 
-fn icon_for(entry: &FileEntry) -> Icon {
-    if entry.is_parent() {
-        return Icon::new(CatalogIcon::FolderUp);
-    }
-    match (entry.kind, entry.target) {
-        (FileKind::Dir, _) => Icon::new(IconName::Folder),
-        (FileKind::File, _) => Icon::new(IconName::File),
-        (FileKind::Symlink, Some(FileKind::Dir)) => Icon::new(CatalogIcon::FolderSymlink),
-        (FileKind::Symlink, _) => Icon::new(CatalogIcon::FileSymlink),
-    }
-}
-
 impl TableDelegate for FileListing {
     fn columns_count(&self, _: &App) -> usize {
         self.columns.len()
@@ -522,12 +510,7 @@ impl TableDelegate for FileListing {
                     .h_full()
                     .min_w_0()
                     .gap_2()
-                    .child(
-                        icon_for(entry)
-                            .small()
-                            .text_color(cx.theme().muted_foreground)
-                            .when(entry.is_hidden(), |icon| icon.opacity(0.6)),
-                    )
+                    .child(FileIcon::entry(entry).dimmed(entry.is_hidden()))
                     .child(div().min_w_0().truncate().child(entry.name.clone()));
                 let label = if parent {
                     label

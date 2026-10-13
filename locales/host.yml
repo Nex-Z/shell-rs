@@ -19,9 +19,6 @@ host.proxy_kind.socks5:
   zh-CN: SOCKS5 代理
   en: SOCKS5 proxy
 
-host.draft.name:
-  zh-CN: 请输入名称
-  en: Enter a name
 host.draft.address:
   zh-CN: 请输入地址
   en: Enter an address
@@ -127,8 +124,8 @@ host.dialog.name:
   zh-CN: 名称
   en: Name
 host.dialog.name_placeholder:
-  zh-CN: 例如 web-01
-  en: e.g. web-01
+  zh-CN: 可选，默认用地址
+  en: Optional; the address if left empty
 host.dialog.temporary_name_placeholder:
   zh-CN: 可选，默认用地址
   en: Optional; the address if left empty

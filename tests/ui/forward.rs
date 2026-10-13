@@ -286,7 +286,7 @@ async fn a_remote_forward_swaps_the_machines_in_the_picture_and_the_labels(
         assert!(window.try_find("forward-notes").is_none());
         // Listening beyond the server's loopback needs the server's consent.
         window.click("forward-bind-host", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("0.0.0.0", cx);
     });
     in_frame(cx, handle, |window, cx| {

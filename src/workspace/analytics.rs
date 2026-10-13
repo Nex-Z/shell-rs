@@ -191,6 +191,7 @@ impl Workspace {
             auto_update: settings.update.automatic,
             update_channel: settings.update.channel.key(),
             custom_shortcuts: settings.shortcuts != ShortcutOverrides::default(),
+            file_icons: settings.file_icon_style.key(),
             hosts: store.hosts().len(),
             credentials: store.credentials().len(),
             forwards: store.forwards().len(),

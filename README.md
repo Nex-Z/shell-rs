@@ -198,6 +198,7 @@ cargo test
 - [alacritty_terminal](https://crates.io/crates/alacritty_terminal) and [portable-pty](https://crates.io/crates/portable-pty): terminal emulation and local PTYs
 - [keyring](https://crates.io/crates/keyring): the system keychain
 - [Simple Icons](https://simpleicons.org): the OS logos on host badges and the Docker logo in the right sidebar (CC0)
+- [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme): the SFTP lists' color icons (MIT)
 - [WinSCP](https://winscp.net) and Xshell: the interaction designs ShellRS follows
 
 ## License

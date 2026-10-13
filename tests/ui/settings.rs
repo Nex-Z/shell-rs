@@ -112,8 +112,8 @@ fn settings_open_from_the_host_list_as_one_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("settings").visible());
         assert_eq!(window.find("settings").focused(), Some(true));
-        // ⌘W closes it like any other tab.
-        window.press("cmd-w", cx);
+        // The platform close shortcut closes it like any other tab.
+        window.press("secondary-w", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -129,7 +129,7 @@ fn settings_open_from_the_host_list_as_one_tab(cx: &mut TestAppContext) {
 
 /// The label of one dropdown in the 外观 page's 常规 group. `Settings` names
 /// its groups, items and dropdown buttons by position.
-/// Open the settings tab on 外部 CLI, the fifth category.
+/// Open the settings tab on 外部 CLI, the sixth category.
 fn open_external_cli_settings(cx: &mut TestAppContext, handle: WindowHandle<Root>) {
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -139,7 +139,7 @@ fn open_external_cli_settings(cx: &mut TestAppContext, handle: WindowHandle<Root
     cx.run_until_parked();
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.within("settings").click("0-4", cx);
+        window.within("settings").click("0-5", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -456,7 +456,7 @@ fn the_window_settings_are_on_until_turned_off(cx: &mut TestAppContext) {
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     // 应用 comes right before 关于.
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-5", cx)
+        window.within("settings").click("0-6", cx)
     });
     let switch = |item: usize| {
         move |window: &mut gpui_kit::Window| {
@@ -524,10 +524,10 @@ async fn highlight_rules_are_edited_in_place_on_their_page(cx: &mut TestAppConte
 
     let (handle, workspace) = open_workspace(cx);
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
-    // 关键字高亮 comes right after 终端, with the examples a new
+    // 关键字高亮 comes after 终端 and SFTP, with the examples a new
     // installation starts with: rows 0 to 2.
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-2", cx)
+        window.within("settings").click("0-3", cx)
     });
     let ip = r"\b\d{1,3}(\.\d{1,3}){3}\b";
     assert_eq!(
@@ -579,7 +579,7 @@ async fn highlight_rules_are_edited_in_place_on_their_page(cx: &mut TestAppConte
             window.find(("highlight-rule-error", 3usize)).label(),
             Some("正则表达式写法有误")
         );
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input(r"OutOfMemory\w*", cx);
     });
     in_frame(cx, handle, |window, cx| {
@@ -587,7 +587,7 @@ async fn highlight_rules_are_edited_in_place_on_their_page(cx: &mut TestAppConte
         window.click(("highlight-rule-note", 3usize), cx);
         window.input("内存溢出", cx);
         window.click(("highlight-rule-color", 3usize), cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("#D946EF", cx);
         window.click(("highlight-rule-notify", 3usize), cx);
         window.click(("highlight-rule-enabled", 0usize), cx);

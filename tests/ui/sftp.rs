@@ -330,6 +330,76 @@ async fn sftp_size_column_shows_kilobytes_until_another_format_is_chosen(cx: &mu
     }
 }
 
+/// 设置 › SFTP › 图标风格: the app's monochrome icons until color is chosen,
+/// then color ones in the lists, links included, and in the page's preview.
+/// Menus are not driven here: the dropdown's item writes the settings store,
+/// so the test writes it the same way.
+#[gpui_kit::test]
+async fn sftp_lists_take_color_icons_once_chosen_in_the_settings(cx: &mut TestAppContext) {
+    use shellrs::explorer::FileIconStyle;
+    let provider = Arc::new(FakeSftpProvider::default());
+    let (handle, workspace) = open_workspace_with_sftp(cx, provider);
+    open_test_explorer(cx, handle).await;
+    let colored = |cx: &mut TestAppContext, name: &str| {
+        in_frame(cx, handle, |window, _| {
+            window
+                .within(("remote-pane", SFTP_TAB))
+                .within(ElementId::Name(format!("name:{name}").into()))
+                .try_find("color-icon")
+                .is_some()
+        })
+    };
+    let rows = ["..", "目录", "链接目录", "文件 甲.txt"];
+    for row in rows {
+        assert!(!colored(cx, row), "{row}");
+    }
+
+    let settings = cx.update(|cx| workspace.read(cx).settings().clone());
+    cx.update(|cx| {
+        settings.update(cx, |settings, cx| {
+            settings.update(
+                |settings| settings.file_icon_style = FileIconStyle::Color,
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+    for row in rows {
+        assert!(colored(cx, row), "{row}");
+    }
+
+    in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
+    // SFTP comes right after 终端.
+    in_frame(cx, handle, |window, cx| {
+        window.within("settings").click("0-2", cx)
+    });
+    in_frame(cx, handle, |window, _| {
+        assert_eq!(appearance_dropdown(window, 0).as_deref(), Some("彩色"));
+        // The plain folder and file side by side first, then named ones.
+        let origin = |window: &mut gpui_kit::Window, id: &str| {
+            window
+                .within("file-icon-preview")
+                .find(ElementId::Name(format!("preview:{id}").into()))
+                .bounds()
+                .origin
+        };
+        let (folder, file) = (origin(window, "folder"), origin(window, "file"));
+        assert_eq!(folder.y, file.y);
+        assert!(folder.x < file.x);
+        assert!(folder.y < origin(window, ".config").y);
+        for id in ["folder", "file", ".bashrc"] {
+            assert!(
+                window
+                    .within("file-icon-preview")
+                    .within(ElementId::Name(format!("preview:{id}").into()))
+                    .try_find("color-icon")
+                    .is_some(),
+                "{id}"
+            );
+        }
+    });
+}
+
 /// 显示隐藏文件 is a switch for each side on its own, saved like the size
 /// format and off at first: a side's toolbar button and the key turn it on
 /// and off, its icon and tooltip follow, and a hidden file leaves the
@@ -832,7 +902,7 @@ async fn sftp_bookmark_dialog_adds_orders_removes_and_opens(cx: &mut TestAppCont
         assert_eq!(window.find("bookmark:/home/tester").selected(), Some(true));
         assert!(!enabled(&window.find("bookmark-add")), "already bookmarked");
         window.click("open-directory-path", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("/etc/", cx);
     })
     .unwrap();
@@ -1198,7 +1268,17 @@ async fn sftp_tab_reconnects_from_its_tab_bar_and_reports_at_the_bottom_left(
     let status_is = |expected: &'static str| {
         move |window: &mut gpui_kit::Window, cx: &mut App| {
             window.render_frame(cx);
-            window.find("status-connection").label() == Some(expected)
+            window.find("status-connection").label() == Some(expected) && {
+                // Only a connection that is not up has a dot.
+                let dot = window
+                    .within(("explorer-tab", SFTP_TAB))
+                    .try_find("connection-status");
+                if expected.starts_with("已连接") {
+                    dot.is_none()
+                } else {
+                    dot.is_some_and(|dot| dot.label() == Some("未连接"))
+                }
+            }
         }
     };
     let table = cx
@@ -1207,6 +1287,12 @@ async fn sftp_tab_reconnects_from_its_tab_bar_and_reports_at_the_bottom_left(
             assert_eq!(
                 window.find("status-connection").label(),
                 Some("已连接 db-01")
+            );
+            assert!(
+                window
+                    .within(("explorer-tab", SFTP_TAB))
+                    .try_find("connection-status")
+                    .is_none()
             );
             window
                 .within(("remote-pane", SFTP_TAB))
@@ -1228,6 +1314,17 @@ async fn sftp_tab_reconnects_from_its_tab_bar_and_reports_at_the_bottom_left(
     .await;
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
+        let tab = window.within(("explorer-tab", SFTP_TAB));
+        let mark = tab.find(("explorer-tab-os", SFTP_TAB)).bounds();
+        let dot = tab.find("connection-status").bounds();
+        let title = window.find(("explorer-tab", SFTP_TAB)).bounds();
+        let close = window.find(("close-explorer", SFTP_TAB)).bounds();
+        assert_eq!(mark.center().y, close.center().y);
+        assert_eq!(mark.center().y, title.center().y);
+        let centers = dot.center() - mark.center();
+        let distance = (f32::from(centers.x).powi(2) + f32::from(centers.y).powi(2)).sqrt();
+        assert!(distance > f32::from(mark.size.width + dot.size.width) / 2.);
+        assert!(dot.right() < close.left());
         let remote = window.within(("remote-pane", SFTP_TAB));
         assert_eq!(remote.find("table").bounds(), table);
         // Still there to click: it answers with the offer to reconnect.
@@ -1381,7 +1478,7 @@ async fn sftp_file_commands_confirm_validate_and_send_one_operation(cx: &mut Tes
             window.render_frame(cx);
             if let Some(typed) = typed {
                 window.click("entry-name", cx);
-                window.press("cmd-a", cx);
+                window.press("secondary-a", cx);
                 window.press("backspace", cx);
                 window.input(typed, cx);
             }
@@ -1400,7 +1497,7 @@ async fn sftp_file_commands_confirm_validate_and_send_one_operation(cx: &mut Tes
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("entry-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("新名字.txt", cx);
         window.click("commit", cx);
     })
@@ -1851,7 +1948,7 @@ async fn the_sftp_tab_can_be_renamed_and_follow_the_host_again(cx: &mut TestAppC
         window.render_frame(cx);
         assert_eq!(window.find("tab-name").value(), Some(default.as_str()));
         window.click("tab-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("生产库文件", cx);
         window.click("commit", cx);
     })
@@ -1879,7 +1976,7 @@ async fn the_sftp_tab_can_be_renamed_and_follow_the_host_again(cx: &mut TestAppC
         window.render_frame(cx);
         assert_eq!(window.find("tab-name").value(), Some("生产库文件"));
         window.click("tab-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.press("backspace", cx);
         window.click("commit", cx);
     })

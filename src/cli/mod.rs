@@ -65,7 +65,7 @@ const AFTER_HELP: &str = concat!(
 
 const HOST_FIELDS: &str = "\
 Reads one JSON object from stdin. Every field may be left out; `update` changes only the fields given.
-  name        Required to create.
+  name        Default the address; an empty name is the address too.
   host        The address (IP or host name). Required to create. Also read as `address`.
   port        Default 22.
   user        Default root. A host using a credential logs in as the credential's user.

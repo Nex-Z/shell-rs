@@ -3,7 +3,7 @@ use gpui_kit::{SharedString, WindowAppearance};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::app::ShortcutOverrides;
-use crate::explorer::{FileSizeFormat, ShowHiddenFiles};
+use crate::explorer::{FileIconStyle, FileSizeFormat, ShowHiddenFiles};
 use crate::i18n::t;
 use crate::terminal::{
     DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, FONT_SIZE_RANGE, HighlightRule, LINE_HEIGHT_RANGE,
@@ -36,6 +36,8 @@ pub struct AppSettings {
     /// 显示隐藏文件 in the SFTP lists, each side on its own, switched from
     /// their toolbars and menus.
     pub show_hidden: ShowHiddenFiles,
+    /// SFTP → 图标风格.
+    pub file_icon_style: FileIconStyle,
     /// 终端 → 通知.
     pub notifications: NotificationSettings,
     /// 关键字高亮.
@@ -259,6 +261,24 @@ impl Choice for Channel {
     }
 }
 
+impl Choice for FileIconStyle {
+    const ALL: &'static [Self] = &[Self::Monochrome, Self::Color];
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Monochrome => "monochrome",
+            Self::Color => "color",
+        }
+    }
+
+    fn label(self) -> SharedString {
+        match self {
+            Self::Monochrome => t!("settings.file_icons.monochrome"),
+            Self::Color => t!("settings.file_icons.color"),
+        }
+    }
+}
+
 impl Choice for RightClick {
     const ALL: &'static [Self] = &[Self::Nothing, Self::Paste, Self::Menu];
 
@@ -475,6 +495,7 @@ mod tests {
         check::<InterfaceLanguage>();
         check::<Appearance>();
         check::<RightClick>();
+        check::<FileIconStyle>();
         assert_eq!(Appearance::from_key("sepia"), None);
     }
 
@@ -489,6 +510,11 @@ mod tests {
         let settings: AppSettings =
             serde_json::from_str(r#"{"file_size_format":"short"}"#).unwrap();
         assert_eq!(settings.file_size_format, FileSizeFormat::Short);
+        // The SFTP lists keep the app's monochrome icons unless asked.
+        assert_eq!(
+            AppSettings::default().file_icon_style,
+            FileIconStyle::Monochrome
+        );
         // Hidden files are left out unless the file says otherwise, for
         // each side on its own.
         assert_eq!(

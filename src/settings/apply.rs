@@ -1,7 +1,7 @@
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::*;
 
-use crate::explorer::{FileSizeFormat, ShowHiddenFiles};
+use crate::explorer::{FileIconStyle, FileSizeFormat, ShowHiddenFiles};
 use crate::i18n::UiLocale;
 use crate::terminal::{
     TerminalColors, TerminalFont, TerminalHighlights, TerminalInteraction, is_font_installed,
@@ -13,7 +13,7 @@ use super::app_theme::{ui_theme, ui_theme_name};
 /// Bring the window in line with the settings: the theme chosen for the
 /// appearance, in the app and its terminals, the locale, the terminal font,
 /// mouse and highlight rules, the keyboard shortcuts, the SFTP size format and
-/// whether SFTP shows hidden files.
+/// icons, and whether SFTP shows hidden files.
 /// Does nothing where they already agree, so it can run on every settings
 /// change and every change of the system appearance.
 pub fn apply(settings: AppSettings, window: &mut Window, cx: &mut App) {
@@ -90,6 +90,11 @@ pub fn apply(settings: AppSettings, window: &mut Window, cx: &mut App) {
 
     if cx.try_global::<FileSizeFormat>() != Some(&settings.file_size_format) {
         cx.set_global(settings.file_size_format);
+        window.refresh();
+    }
+
+    if cx.try_global::<FileIconStyle>() != Some(&settings.file_icon_style) {
+        cx.set_global(settings.file_icon_style);
         window.refresh();
     }
 

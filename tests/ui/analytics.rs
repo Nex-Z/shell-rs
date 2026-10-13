@@ -58,6 +58,7 @@ fn the_window_coming_forward_is_reported_with_the_setup(cx: &mut TestAppContext)
     assert_eq!(snapshot.hosts, 6);
     assert_eq!(snapshot.appearance, "system");
     assert!(!snapshot.highlight);
+    assert_eq!(snapshot.file_icons, "monochrome");
 }
 
 #[gpui_kit::test]
@@ -143,7 +144,7 @@ fn turned_off_in_the_settings_nothing_is_reported(cx: &mut TestAppContext) {
     // 设置 › 关于 › 隐私 › 发送匿名使用统计.
     in_frame(cx, handle, |window, cx| window.click("open-settings", cx));
     in_frame(cx, handle, |window, cx| {
-        window.within("settings").click("0-6", cx)
+        window.within("settings").click("0-7", cx)
     });
     in_frame(cx, handle, |window, cx| {
         let switch = window

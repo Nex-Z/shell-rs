@@ -476,7 +476,7 @@ async fn renaming_a_group_keeps_the_hosts_under_it(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("commit").visible());
         window.click("group-name", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("生产环境", cx);
         window.click("commit", cx);
     })

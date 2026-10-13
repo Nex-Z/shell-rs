@@ -1,4 +1,4 @@
-use super::{ExplorerId, ExplorerPanel, TransferJob};
+use super::{ExplorerId, ExplorerPanel, FileIcon, FileIconKind, TransferJob};
 use crate::app::ExplorerDispatch as _;
 use crate::{
     app::{ExplorerAction, ExplorerCommand},
@@ -8,7 +8,7 @@ use crate::{
     shared::commit_footer,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     dialog::{DialogAction, DialogFooter},
@@ -424,15 +424,14 @@ impl TransferSources {
                             .px_2()
                             .py_0p5()
                             .text_sm()
-                            .child(
-                                Icon::new(if item.is_dir {
-                                    IconName::Folder
+                            .child(FileIcon::new(
+                                item.name.clone(),
+                                if item.is_dir {
+                                    FileIconKind::Folder
                                 } else {
-                                    IconName::File
-                                })
-                                .small()
-                                .text_color(muted),
-                            )
+                                    FileIconKind::File
+                                },
+                            ))
                             .child(div().min_w_0().child(item.name.clone()))
                             // Items from different folders say which.
                             .when(!shared_folder, |this| {

@@ -199,7 +199,7 @@ async fn the_search_finds_processes_by_name_pid_or_user(cx: &mut TestAppContext)
     });
 
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("2202", cx);
     });
     in_frame(cx, handle, |window, _| {
@@ -207,7 +207,7 @@ async fn the_search_finds_processes_by_name_pid_or_user(cx: &mut TestAppContext)
     });
 
     in_frame(cx, handle, |window, cx| {
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("nginx", cx);
     });
     in_frame(cx, handle, |window, _| {

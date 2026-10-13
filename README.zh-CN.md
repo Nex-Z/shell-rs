@@ -196,6 +196,7 @@ cargo test
 - [alacritty_terminal](https://crates.io/crates/alacritty_terminal) 和 [portable-pty](https://crates.io/crates/portable-pty)：终端模拟与本地 PTY
 - [keyring](https://crates.io/crates/keyring)：系统钥匙串
 - [Simple Icons](https://simpleicons.org)：系统徽章和右侧栏 Docker 工具使用的 logo（CC0）
+- [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)：SFTP 文件列表的彩色图标（MIT）
 - [WinSCP](https://winscp.net) 和 Xshell：交互设计的参照
 
 ## 许可证

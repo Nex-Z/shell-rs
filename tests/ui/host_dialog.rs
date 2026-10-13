@@ -270,7 +270,7 @@ async fn a_hosts_notes_take_several_lines_and_come_back_when_edited(cx: &mut Tes
     });
     in_frame(cx, handle, |window, cx| {
         window.click("host-notes", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("已下线", cx);
         window.click("commit", cx);
     });
@@ -480,6 +480,65 @@ async fn a_form_error_sits_above_the_dialog_and_a_click_puts_it_away(cx: &mut Te
 }
 
 #[gpui_kit::test]
+async fn a_host_without_an_address_is_not_saved(cx: &mut TestAppContext) {
+    let (handle, workspace) = open_workspace_with_store(cx, HostStore::empty());
+    for (name, address) in [("", ""), ("", "   "), ("web-01", "")] {
+        in_frame(cx, handle, |window, cx| window.click("new-host-panel", cx));
+        in_frame(cx, handle, |window, cx| {
+            window.click("host-name", cx);
+            window.input(name, cx);
+            window.click("host-address", cx);
+            window.input(address, cx);
+            window.click("commit", cx);
+        });
+        in_frame(cx, handle, |window, _| {
+            assert!(window.find("commit").visible());
+            assert_eq!(window.find("form-error").label(), Some("请输入地址"));
+        });
+        cx.update(|cx| assert!(workspace.read(cx).store().read(cx).hosts().is_empty()));
+        in_frame(cx, handle, |window, cx| window.press("escape", cx));
+        wait_for_dialog_to_close(cx, handle).await;
+    }
+}
+
+#[gpui_kit::test]
+async fn a_blank_host_name_uses_the_address_and_is_saved(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("shellrs.db");
+    let store = HostStore::load(HostDatabase::open(&path).unwrap()).unwrap();
+    let (handle, workspace) = open_workspace_with_store(cx, store);
+    for (name, address) in [("", "example.com"), ("   ", "10.0.0.2")] {
+        in_frame(cx, handle, |window, cx| {
+            // Saving closes the dialog and leaves focus outside the host panel.
+            window.click("host-search", cx);
+            window.click("new-host-panel", cx);
+        });
+        in_frame(cx, handle, |window, cx| {
+            window.click("host-name", cx);
+            window.input(name, cx);
+            window.click("host-address", cx);
+            window.input(&format!(" {address} "), cx);
+            window.click("commit", cx);
+        });
+        wait_for_dialog_to_close(cx, handle).await;
+        cx.update(|cx| {
+            let store = workspace.read(cx).store().read(cx);
+            let host = store
+                .hosts()
+                .iter()
+                .find(|host| host.address == address)
+                .unwrap();
+            assert_eq!(host.name.as_ref(), address);
+        });
+    }
+    let saved = HostDatabase::open(&path).unwrap().load().unwrap();
+    assert_eq!(saved.hosts.len(), 2);
+    for host in saved.hosts {
+        assert_eq!(host.name, host.address);
+    }
+}
+
+#[gpui_kit::test]
 async fn new_host_dialog_validates_then_inserts(cx: &mut TestAppContext) {
     let (handle, workspace) = open_workspace(cx);
 
@@ -527,7 +586,7 @@ async fn new_host_dialog_validates_then_inserts(cx: &mut TestAppContext) {
         // The error pops up as a notification over the dialog, not as a line
         // at the bottom of the form.
         assert_eq!(window.notifications(cx).len(), 1);
-        assert_eq!(window.find("form-error").label(), Some("请输入名称"));
+        assert_eq!(window.find("form-error").label(), Some("请输入地址"));
         window.click("commit", cx);
     })
     .unwrap();
@@ -589,10 +648,10 @@ async fn testing_a_connection_logs_in_with_what_the_form_shows(cx: &mut TestAppC
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("host-password", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("wrong-password", cx);
         window.click("host-port", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("2222", cx);
         window.click("test-connection", cx);
     })
@@ -665,7 +724,7 @@ async fn a_connection_test_needs_a_host_and_a_user_first(cx: &mut TestAppContext
         window.input("10.0.3.7", cx);
         window.click("host-user", cx);
         #[cfg(target_os = "macos")]
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         #[cfg(not(target_os = "macos"))]
         window.press("ctrl-a", cx);
         window.press("backspace", cx);
@@ -834,7 +893,7 @@ async fn editing_the_host_moves_the_saved_password_with_it(cx: &mut TestAppConte
         window.render_frame(cx);
         assert!(window.find("host-password").visible());
         window.click("host-address", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("10.9.9.9", cx);
         window.click("commit", cx);
     })
@@ -882,7 +941,7 @@ async fn clearing_the_password_field_forgets_the_saved_password(cx: &mut TestApp
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         window.click("host-password", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.press("backspace", cx);
         window.click("commit", cx);
     })

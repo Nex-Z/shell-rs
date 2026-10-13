@@ -40,6 +40,9 @@ settings.category.appearance:
 settings.category.terminal:
   zh-CN: 终端
   en: Terminal
+settings.category.sftp:
+  zh-CN: SFTP
+  en: SFTP
 settings.category.highlight:
   zh-CN: 关键字高亮
   en: Highlighting
@@ -172,6 +175,31 @@ settings.local_terminal.browse_prompt:
 settings.local_terminal.keywords:
   zh-CN: shell,本地终端,命令,参数,bash,zsh,fish,PowerShell,cmd
   en: shell,local terminal,command,arguments,bash,zsh,fish,PowerShell,cmd
+
+settings.sftp.file_list:
+  zh-CN: 文件列表
+  en: File list
+settings.sftp.icon_style:
+  zh-CN: 图标风格
+  en: Icon style
+settings.sftp.icon_style_description:
+  zh-CN: 彩色图标按文件类型和常见的文件夹名区分。
+  en: Color icons tell file types and common folder names apart.
+settings.sftp.preview_folder:
+  zh-CN: 文件夹
+  en: Folder
+settings.sftp.preview_file:
+  zh-CN: 普通文件
+  en: File
+settings.sftp.keywords:
+  zh-CN: 图标,彩色,单色,文件,文件夹,预览
+  en: icons,color,monochrome,files,folders,preview
+settings.file_icons.monochrome:
+  zh-CN: 单色
+  en: Monochrome
+settings.file_icons.color:
+  zh-CN: 彩色
+  en: Color
 
 settings.highlight.options:
   zh-CN: 常规
